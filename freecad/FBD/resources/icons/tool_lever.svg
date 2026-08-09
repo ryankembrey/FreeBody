@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: LGPL-2.1-or-later -->
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <g fill="none" stroke="#1d2025" stroke-width="3.4" stroke-linecap="round">
+    <line x1="8" y1="26" x2="56" y2="34"/>
+  </g>
+  <g fill="none" stroke="#37474f" stroke-width="3">
+    <path d="M32 30 L24 46 L40 46 Z" fill="none"/>
+    <line x1="20" y1="46" x2="44" y2="46"/>
+  </g>
+  <g stroke="#37474f" stroke-width="2" stroke-linecap="round">
+    <line x1="22" y1="46" x2="18" y2="52"/>
+    <line x1="29" y1="46" x2="25" y2="52"/>
+    <line x1="36" y1="46" x2="32" y2="52"/>
+    <line x1="43" y1="46" x2="39" y2="52"/>
+  </g>
+  <circle cx="32" cy="30" r="3.6" fill="#ffffff" stroke="#1d2025" stroke-width="2.4"/>
+</svg>

@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+<line x1="26" y1="10" x2="26" y2="54" stroke="#37474f" stroke-width="4"/><line x1="26" y1="12" x2="16" y2="20" stroke="#37474f" stroke-width="2.5"/><line x1="26" y1="20" x2="16" y2="28" stroke="#37474f" stroke-width="2.5"/><line x1="26" y1="28" x2="16" y2="36" stroke="#37474f" stroke-width="2.5"/><line x1="26" y1="36" x2="16" y2="44" stroke="#37474f" stroke-width="2.5"/><line x1="26" y1="44" x2="16" y2="52" stroke="#37474f" stroke-width="2.5"/><line x1="26" y1="32" x2="52" y2="32" stroke="#1d2025" stroke-width="4.5"/>
+</svg>

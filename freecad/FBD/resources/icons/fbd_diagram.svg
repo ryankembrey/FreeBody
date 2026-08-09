@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+<line x1="8" y1="26" x2="56" y2="26" stroke="#1d2025" stroke-width="5" stroke-linecap="round"/><path d="M18 26 L10.8 38.0 L25.2 38.0 Z" fill="none" stroke="#37474f" stroke-width="3.5" stroke-linejoin="round"/><line x1="7.6" y1="38.0" x2="28.4" y2="38.0" stroke="#37474f" stroke-width="3.5"/><path d="M46 26 L38.8 38.0 L53.2 38.0 Z" fill="none" stroke="#37474f" stroke-width="3.5" stroke-linejoin="round"/><line x1="35.6" y1="38.0" x2="56.4" y2="38.0" stroke="#37474f" stroke-width="3.5"/><line x1="32" y1="4" x2="32" y2="18" stroke="#c62828" stroke-width="4"/><path d="M32 26 L26 14 L38 14 Z" fill="#c62828"/>
+</svg>
