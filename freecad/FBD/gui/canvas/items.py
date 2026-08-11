@@ -1203,10 +1203,15 @@ class StructureBoundsOverlay(QtWidgets.QGraphicsItem):
 
         sc = getattr(self.canvas, "global_scale", 1.0)
         for comp in components:
-            xs = [model.nodes[n].x * sc for n in comp if n in model.nodes]
-            ys = [-model.nodes[n].y * sc for n in comp if n in model.nodes]
-            if not xs or not ys:
+            # to_scene, not a raw multiply: unit_scale is a divisor
+            # everywhere else drawn, and a sketch import now sets a real
+            # one, so multiplying put this box far from the structure.
+            pts = [to_scene(model.nodes[n].x, model.nodes[n].y, sc)
+                   for n in comp if n in model.nodes]
+            if not pts:
                 continue
+            xs = [p.x() for p in pts]
+            ys = [p.y() for p in pts]
 
             pad = 18.0
             rect = QtCore.QRectF(
@@ -1232,6 +1237,14 @@ class StructureBoundsOverlay(QtWidgets.QGraphicsItem):
                 painter.setPen(pen)
                 painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
                 painter.drawRect(rect)
+
+                # Corner tick: the same resize hint used everywhere else.
+                painter.setPen(QtGui.QPen(S.SELECT, 1.1))
+                for i in (4.0, 8.0, 12.0):
+                    painter.drawLine(
+                        QtCore.QPointF(rect.right() - i, rect.bottom()),
+                        QtCore.QPointF(rect.right(), rect.bottom() - i),
+                    )
 
         painter.restore()
 
@@ -1780,3 +1793,105 @@ class ResultsTableOverlay(QtWidgets.QGraphicsItem):
             )
 
         painter.restore()
+
+
+class DiagramResizeOverlay(QtWidgets.QGraphicsItem):
+    """A handle at the corner of the whole diagram, for resizing it on the
+    page by eye.
+
+    Only ever changes canvas.unit_scale, the model-mm-per-paper-mm display
+    divisor: a joint's own x, y stay exactly what the sketch or the solver
+    need them to be. Every node is translated together as the scale changes,
+    purely to keep the far corner of the diagram fixed on screen while the
+    near corner follows the cursor, the way any bounding-box resize handle
+    behaves; translation alone changes no distance, so nothing about the
+    physics moves.
+    """
+
+    def __init__(self, canvas):
+        super().__init__()
+        self.canvas = canvas
+        self.setZValue(15)
+        self.setAcceptHoverEvents(True)
+        self._dragging = False
+        self._hover = False
+
+    def _corner_model(self):
+        bounds = self.canvas.diagram_bounds_model()
+        if bounds is None:
+            return None
+        _min_x, min_y, max_x, _max_y = bounds
+        return max_x, min_y  # bottom-right: a bigger y is up
+
+    def _corner_scene(self):
+        corner = self._corner_model()
+        if corner is None:
+            return None
+        return to_scene(corner[0], corner[1], self.canvas.unit_scale)
+
+    def boundingRect(self):
+        c = self._corner_scene()
+        if c is None:
+            return QtCore.QRectF()
+        r = self.canvas.px(16.0)
+        return QtCore.QRectF(c.x() - r, c.y() - r, 2 * r, 2 * r)
+
+    def shape(self):
+        p = QtGui.QPainterPath()
+        c = self._corner_scene()
+        if c is not None:
+            p.addEllipse(c, self.canvas.px(9.0), self.canvas.px(9.0))
+        return p
+
+    def paint(self, painter, option, widget=None):
+        if not self.canvas.model.nodes:
+            return
+        c = self._corner_scene()
+        if c is None:
+            return
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        active = self._hover or self._dragging
+        r = self.canvas.px(5.5 if active else 4.2)
+        col = S.SELECT if active else S.INK_LIGHT
+        painter.setPen(QtGui.QPen(col, 1.4))
+        painter.setBrush(QtGui.QColor(255, 255, 255, 220))
+        painter.drawEllipse(c, r, r)
+        tick = self.canvas.px(4.5)
+        painter.drawLine(QtCore.QPointF(c.x() - tick, c.y() + tick),
+                         QtCore.QPointF(c.x() + tick, c.y() - tick))
+
+    def hoverEnterEvent(self, event):
+        self._hover = True
+        self.setCursor(QtCore.Qt.CursorShape.SizeFDiagCursor)
+        self.update()
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self._hover = False
+        self.update()
+        super().hoverLeaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if (event.button() == QtCore.Qt.MouseButton.LeftButton
+                and self.canvas.begin_diagram_resize()):
+            self._dragging = True
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._dragging:
+            self.canvas.update_diagram_resize(event.scenePos())
+            self.prepareGeometryChange()
+            self.update()
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._dragging:
+            self._dragging = False
+            self.canvas.end_diagram_resize()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)

@@ -215,6 +215,53 @@ def import_sketch(model, sketch, link: bool = True) -> Tuple[List, List]:
     return list(touched.values()), members
 
 
+def fit_to_sheet(model, margin: float = 0.12, size_fraction: float = 0.5) -> bool:
+    """Centre and scale freshly imported geometry to sit on the sheet.
+
+    Only the *display* scale ever changes here, never a joint's real x, y:
+    those numbers are what the solver reads, so a sketch's true engineering
+    dimensions can't be corrupted by how big it happens to look on the page.
+    Translating a structure changes none of its distances, so shifting every
+    joint to centre it is free; only sheet.unit_scale, the model-mm-per-
+    paper-mm divisor used to draw it, needs to grow or shrink for it to fit.
+
+    size_fraction shrinks it further within that fit -- 0.5 means the
+    diagram reads at half the linear size it would take up if it filled the
+    sheet, so it looks like a diagram rather than wallpaper.
+
+    Applied once, at first import. sx/sy already hold the untransformed
+    sketch coordinates, so a later resync's placement fit recovers exactly
+    this translation and scale from the surviving joints, the same way it
+    would recover a manual drag or a manual resize.
+    """
+    nodes = list(model.nodes.values())
+    if not nodes:
+        return False
+    xs = [n.x for n in nodes]
+    ys = [n.y for n in nodes]
+    width = max(max(xs) - min(xs), 1e-6)
+    height = max(max(ys) - min(ys), 1e-6)
+    cx, cy = (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0
+
+    sheet = model.sheet
+    usable_w = sheet.width * (1.0 - 2 * margin)
+    usable_h = sheet.height * (1.0 - 2 * margin)
+    if usable_w <= 0 or usable_h <= 0:
+        return False
+    fit_scale = max(width / usable_w, height / usable_h)
+    scale = fit_scale / max(1e-6, min(1.0, size_fraction))
+    if not (1e-9 < scale < 1e12):
+        return False
+
+    dx = scale * sheet.width / 2.0 - cx
+    dy = scale * sheet.height / 2.0 - cy
+    for n in nodes:
+        n.x += dx
+        n.y += dy
+    sheet.unit_scale = scale
+    return True
+
+
 # === resync
 
 

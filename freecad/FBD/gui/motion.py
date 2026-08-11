@@ -881,33 +881,9 @@ class ActuatorTool(_DriverTool):
         return True
 
 
-class LeverTool(Tool):
-    name = "Lever"
-    prompt = "Click to place a first class lever: a bar on a pivot."
-
-    def click(self, scene_pos, model_pos) -> bool:
-        del scene_pos
-        info = {}
-
-        def build(m):
-            info.update(
-                m.add_lever(model_pos[0], model_pos[1], length=self.canvas.default_lever_length)
-            )
-            return info
-
-        edit(self.canvas, "Add lever", build)
-        if info:
-            self.canvas.select_entity("node", info["pivot"])
-            self.canvas.set_prompt(
-                "Lever placed, pivot in the centre, mechanical advantage 1. "
-                "Drag the pivot along the bar to change it."
-            )
-        return True
-
-
 def motion_tools(canvas):
     """The mechanism half of the palette, appended by tools.build_tools."""
-    return [LeverTool(canvas), MotorTool(canvas), ActuatorTool(canvas)]
+    return [MotorTool(canvas), ActuatorTool(canvas)]
 
 
 # === playback

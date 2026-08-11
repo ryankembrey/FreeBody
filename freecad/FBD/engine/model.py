@@ -501,6 +501,18 @@ class Model:
             "advantage": (a_len / b_len) if b_len > 1e-9 else float("inf"),
         }
 
+    def add_pivot(self, member: int, t: float = 0.5) -> dict:
+        """Turn a point on an existing member into a pivot, in one step.
+
+        This is how a lever is made now that geometry comes from Sketcher:
+        click a bar that is already there, rather than fabricating a new
+        one. It is exactly add_anchor followed by add_support_on, bundled so
+        the tool needs one undo step and one call.
+        """
+        anchor = self.add_anchor(member, t, "Pivot")
+        support = self.add_support_on(anchor.id, PIN)
+        return {"anchor": anchor.id, "support": support.id, "member": member}
+
     # === queries
 
     def support_at(self, node: int) -> Optional[Support]:

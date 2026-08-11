@@ -74,24 +74,6 @@ class ToolSelect(_ToolCommand):
     tool_name = "Select"
 
 
-class ToolNode(_ToolCommand):
-    icon = "tool_node.svg"
-    text = "Joint"
-    tip = "Place a joint. Joints are where members, supports and loads meet."
-    shortcut = "N"
-    tool_name = "Node"
-
-
-class ToolMember(_ToolCommand):
-    icon = "tool_member.svg"
-    text = "Member"
-    tip = (
-        "Draw a member between two joints. Keeps chaining from the last joint; Escape ends the run."
-    )
-    shortcut = "M"
-    tool_name = "Member"
-
-
 class ToolAnchor(_ToolCommand):
     icon = "tool_anchor.svg"
     text = "Point"
@@ -158,12 +140,12 @@ class ToolLineLoad(_ToolCommand):
     tool_name = "Line load"
 
 
-class ToolLever(_ToolCommand):
-    icon = "tool_lever.svg"
-    text = "Lever"
+class ToolPivot(_ToolCommand):
+    icon = "tool_pivot.svg"
+    text = "Pivot"
     shortcut = "V"
-    tip = "Place a first class lever: a bar on a pivot in its centre."
-    tool_name = "Lever"
+    tip = "Pivot a point on an existing member, turning it into a lever."
+    tool_name = "Pivot"
 
 
 class ToolMotor(_ToolCommand):
@@ -351,6 +333,7 @@ class ImportSketch(_Command):
 
         from . import sketch_import
 
+        first_import = editor.model.sketch_link is None
         editor.push_undo(f"Import sketch {sketch.Label}")
         try:
             nodes, members = sketch_import.import_sketch(editor.model, sketch)
@@ -364,6 +347,12 @@ class ImportSketch(_Command):
             editor._undo.pop()
             App.Console.PrintWarning(f"FBD: '{sketch.Label}' has no lines or points to import.\n")
             return
+
+        if first_import:
+            # Sketch coordinates are already true engineering mm, so this
+            # only ever changes the display scale and where the origin sits
+            # on the sheet, never a joint's real x, y.
+            sketch_import.fit_to_sheet(editor.model)
 
         editor.model_changed()
         editor.fit()
@@ -412,8 +401,6 @@ COMMANDS = {
     "FBD_OpenDiagram": OpenDiagram,
     "FBD_ImportSketch": ImportSketch,
     "FBD_ToolSelect": ToolSelect,
-    "FBD_ToolNode": ToolNode,
-    "FBD_ToolMember": ToolMember,
     "FBD_ToolAnchor": ToolAnchor,
     "FBD_ToolPin": ToolPin,
     "FBD_ToolRoller": ToolRoller,
@@ -422,7 +409,7 @@ COMMANDS = {
     "FBD_ToolForce": ToolForce,
     "FBD_ToolMoment": ToolMoment,
     "FBD_ToolLineLoad": ToolLineLoad,
-    "FBD_ToolLever": ToolLever,
+    "FBD_ToolPivot": ToolPivot,
     "FBD_ToolMotor": ToolMotor,
     "FBD_ToolActuator": ToolActuator,
     "FBD_SyncSketch": SyncSketch,

@@ -277,6 +277,8 @@ class Editor(QtWidgets.QWidget, MotionController):
         self.scene.addItem(self.result_overlay)
         self.results_overlay = I.ResultsTableOverlay(self)
         self.scene.addItem(self.results_overlay)
+        self.diagram_resize = I.DiagramResizeOverlay(self)
+        self.scene.addItem(self.diagram_resize)
 
         self.tools = build_tools(self)
         self.tool = self.tools[0]
@@ -471,11 +473,18 @@ class Editor(QtWidgets.QWidget, MotionController):
                 }
 
     def _component_bounds(self, comp_nodes) -> QtCore.QRectF:
-        sc = self.global_scale
-        xs = [self.model.nodes[n].x * sc for n in comp_nodes if n in self.model.nodes]
-        ys = [-self.model.nodes[n].y * sc for n in comp_nodes if n in self.model.nodes]
-        if not xs or not ys:
+        # Real scene position, the same as everything drawn. This used to
+        # multiply by scale instead of dividing, which only ever matched
+        # reality while unit_scale sat at 1 -- true for a freehand diagram
+        # that never touched it, but every sketch import now sets a real
+        # scale, and the box would land far from wherever the structure
+        # actually is: invisible in practice, not merely misplaced.
+        pts = [I.to_scene(self.model.nodes[n].x, self.model.nodes[n].y, self.global_scale)
+               for n in comp_nodes if n in self.model.nodes]
+        if not pts:
             return QtCore.QRectF()
+        xs = [p.x() for p in pts]
+        ys = [p.y() for p in pts]
         pad = 18.0
         return QtCore.QRectF(
             min(xs) - pad,
@@ -483,6 +492,11 @@ class Editor(QtWidgets.QWidget, MotionController):
             (max(xs) - min(xs)) + 2 * pad,
             (max(ys) - min(ys)) + 2 * pad,
         )
+
+    def _is_near_box_corner(self, scene_pos, rect, tol_pixels=10.0) -> bool:
+        tol = self.px(tol_pixels)
+        corner = QtCore.QPointF(rect.right(), rect.bottom())
+        return math.hypot(scene_pos.x() - corner.x(), scene_pos.y() - corner.y()) <= tol
 
     def _is_near_box_edge(self, scene_pos, rect, tol_pixels=8.0) -> bool:
         tol = self.px(tol_pixels)
@@ -529,6 +543,46 @@ class Editor(QtWidgets.QWidget, MotionController):
             if nid in self.model.nodes
         }
         self._drag_started = False
+
+    def _start_component_resize(self, comp_nodes, rect, start_model_pos):
+        """Grab the corner of one structure's own bounding box.
+
+        Unlike the whole-diagram handle, this rescales that structure's
+        real x, y directly: the same kind of operation as calibrating a
+        member, just aimed at one piece of a multi-structure sheet rather
+        than the whole page's display scale.
+        """
+        del rect, start_model_pos
+        nodes = {n: (self.model.nodes[n].x, self.model.nodes[n].y)
+                 for n in comp_nodes if n in self.model.nodes}
+        if not nodes:
+            return
+        xs = [xy[0] for xy in nodes.values()]
+        ys = [xy[1] for xy in nodes.values()]
+        self._resizing_component = set(nodes)
+        self._resize_comp_initial = nodes
+        # Anchor the opposite corner so it stays put while the dragged
+        # corner follows the cursor: the ordinary meaning of a resize.
+        self._resize_comp_anchor = (min(xs), max(ys))
+        self._resize_comp_corner0 = (max(xs), min(ys))
+        self.push_undo("Resize structure")
+
+    def _update_component_resize(self, scene_pos):
+        ax, ay = self._resize_comp_anchor
+        cx0, cy0 = self._resize_comp_corner0
+        start_len = math.hypot(cx0 - ax, cy0 - ay)
+        if start_len < 1e-6:
+            return
+        mx, my = I.to_model(scene_pos, scale=self.global_scale)
+        new_len = math.hypot(mx - ax, my - ay)
+        ratio = max(0.05, min(20.0, new_len / start_len))
+        for nid, (ix, iy) in self._resize_comp_initial.items():
+            node = self.model.nodes.get(nid)
+            if node:
+                node.x = ax + (ix - ax) * ratio
+                node.y = ay + (iy - ay) * ratio
+        self.invalidate_result()
+        self.refresh_geometry()
 
     def snap(self, scene_pos: QtCore.QPointF) -> QtCore.QPointF:
         if not self.snap_enabled:
@@ -623,12 +677,17 @@ class Editor(QtWidgets.QWidget, MotionController):
             modifiers = QtWidgets.QApplication.keyboardModifiers()
             shift_held = bool(modifiers & QtCore.Qt.KeyboardModifier.ShiftModifier)
 
-            # 1. Check near bounding box edge -> Drag entire structure!
+            # 1. Check the bounding box: corner resizes the structure,
+            # edge drags the whole thing.
             comp, rect = self._find_component_at(scene_pos)
-            if comp and rect and self._is_near_box_edge(scene_pos, rect):
-                ref_node = next(iter(comp))
-                self._start_node_drag(comp, ref_node, model_pos)
-                return True
+            if comp and rect:
+                if self._is_near_box_corner(scene_pos, rect):
+                    self._start_component_resize(comp, rect, model_pos)
+                    return True
+                if self._is_near_box_edge(scene_pos, rect):
+                    ref_node = next(iter(comp))
+                    self._start_node_drag(comp, ref_node, model_pos)
+                    return True
 
             # 2. Check joint
             node_id = self.node_near(scene_pos)
@@ -643,6 +702,11 @@ class Editor(QtWidgets.QWidget, MotionController):
         return False
 
     def handle_move(self, scene_pos):
+        if getattr(self, "_resizing_component", None):
+            self._update_component_resize(scene_pos)
+            self.view.setCursor(QtCore.Qt.CursorShape.SizeFDiagCursor)
+            return
+
         if self._dragging_nodes:
             if not any(nid in self.model.nodes for nid in self._dragging_nodes):
                 self._dragging_nodes = []
@@ -659,12 +723,20 @@ class Editor(QtWidgets.QWidget, MotionController):
             except RuntimeError:
                 pass
 
-        # Update cursor when near box edge
-        if self.tool.name == "Select" and comp and rect and self._is_near_box_edge(scene_pos, rect):
+        # Three states, so hovering always previews what a click-drag would
+        # actually do here: resize at the corner, move at the edge or on a
+        # joint of its own, arrow otherwise.
+        if self.tool.name == "Select" and comp and rect \
+                and self._is_near_box_corner(scene_pos, rect):
+            self.view.setCursor(QtCore.Qt.CursorShape.SizeFDiagCursor)
+        elif self.tool.name == "Select" and comp and rect \
+                and self._is_near_box_edge(scene_pos, rect):
             # Open hand means grabbable, closed means held, as everywhere else.
             self.view.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
         elif self._dragging_nodes:
             self.view.setCursor(QtCore.Qt.CursorShape.ClosedHandCursor)
+        elif self.tool.name == "Select" and self.node_near(scene_pos) is not None:
+            self.view.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
         else:
             self.view.setCursor(
                 QtCore.Qt.CursorShape.ArrowCursor
@@ -714,6 +786,12 @@ class Editor(QtWidgets.QWidget, MotionController):
         self._update_snap_marker(scene_pos)
 
     def handle_release(self):
+        if getattr(self, "_resizing_component", None):
+            self._resizing_component = None
+            self._resize_comp_initial = {}
+            self.view.unsetCursor()
+            self.model_changed()
+            return
         if self._dragging_node is not None and self._drag_started:
             self.model_changed()
         self._dragging_nodes = []
@@ -941,6 +1019,13 @@ class Editor(QtWidgets.QWidget, MotionController):
             except RuntimeError:
                 pass
 
+        if hasattr(self, "diagram_resize"):
+            try:
+                self.diagram_resize.prepareGeometryChange()
+                self.diagram_resize.update()
+            except RuntimeError:
+                pass
+
         if hasattr(self, "hud"):
             try:
                 self.hud.sync_state()
@@ -1155,6 +1240,62 @@ class Editor(QtWidgets.QWidget, MotionController):
     @property
     def global_scale(self):
         return self.unit_scale
+
+    def diagram_bounds_model(self):
+        """Bounding box of every joint, in real model mm. None if empty."""
+        if not self.model.nodes:
+            return None
+        xs = [n.x for n in self.model.nodes.values()]
+        ys = [n.y for n in self.model.nodes.values()]
+        return min(xs), min(ys), max(xs), max(ys)
+
+    def begin_diagram_resize(self):
+        """Snapshot everything the resize gesture needs, once, at the grab."""
+        bounds = self.diagram_bounds_model()
+        if bounds is None:
+            return False
+        self._resize_initial = {nid: (n.x, n.y) for nid, n in self.model.nodes.items()}
+        self._resize_start_scale = self.unit_scale
+        min_x, min_y, max_x, max_y = bounds
+        self._resize_centroid = ((min_x + max_x) / 2.0, (min_y + max_y) / 2.0)
+        self._resize_corner0 = (max_x, min_y)
+        self.push_undo("Resize diagram")
+        return True
+
+    def update_diagram_resize(self, scene_pos):
+        """Rescale about the drag-start centroid, from a live mouse position.
+
+        Only sheet.unit_scale and a rigid translation ever change: no joint's
+        real distance to any other joint moves, so the physics stays exactly
+        what the sketch said it was regardless of how the page reads it.
+        """
+        if not getattr(self, "_resize_initial", None):
+            return
+        cx, cy = self._resize_centroid
+        s0 = self._resize_start_scale
+        anchor = I.to_scene(cx, cy, s0)
+        corner0 = I.to_scene(self._resize_corner0[0], self._resize_corner0[1], s0)
+        start_len = math.hypot(corner0.x() - anchor.x(), corner0.y() - anchor.y())
+        if start_len < 1e-6:
+            return
+        new_len = math.hypot(scene_pos.x() - anchor.x(), scene_pos.y() - anchor.y())
+        ratio = max(0.05, min(20.0, new_len / start_len))
+        new_scale = max(1e-6, s0 / ratio)
+
+        dx = anchor.x() * new_scale - cx
+        dy = -anchor.y() * new_scale - cy
+        for nid, (ix, iy) in self._resize_initial.items():
+            node = self.model.nodes.get(nid)
+            if node:
+                node.x, node.y = ix + dx, iy + dy
+        self.model.sheet.unit_scale = new_scale
+        self.invalidate_result()
+        self.refresh_geometry()
+
+    def end_diagram_resize(self):
+        if getattr(self, "_resize_initial", None):
+            self._resize_initial = None
+            self.model_changed()
 
     def prompt_first_member_calibration(self, member):
         drawn_len = self.model.member_length(member)

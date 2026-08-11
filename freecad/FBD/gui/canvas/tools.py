@@ -58,76 +58,16 @@ class Tool:
 
 class SelectTool(Tool):
     name = "Select"
-    prompt = "Click to select. Drag a member (or Shift+drag a joint) to move a structure. Drag a joint to adjust it."
+    prompt = (
+        "Click to select. Drag a joint to move it (Shift extends to its "
+        "structure). Drag the edge of a structure's box to move it all, "
+        "or its corner to resize it."
+    )
     snaps_to_grid = False
 
     def click(self, scene_pos, model_pos) -> bool:
         del scene_pos, model_pos
         return False  # the view's own rubber-band selection handles it
-
-
-class NodeTool(Tool):
-    name = "Node"
-    prompt = "Click to place a joint. Escape to stop."
-
-    def click(self, scene_pos, model_pos) -> bool:
-        existing = self.canvas.node_near(scene_pos)
-        if existing is not None:
-            return True  # never stack two nodes in one place
-        edit(self.canvas, "Add node", lambda m: m.add_node(*model_pos))
-        return True
-
-
-class MemberTool(Tool):
-    name = "Member"
-    prompt = "Click the start joint, then the end. Escape to cancel."
-    wants_node = True
-
-    def __init__(self, canvas):
-        super().__init__(canvas)
-        self.start = None
-
-    def cancel(self):
-        self.start = None
-        super().cancel()
-        self.canvas.set_prompt(self.prompt)
-
-    def click(self, scene_pos, model_pos) -> bool:
-        node_id = self.canvas.node_near(scene_pos)
-        if node_id is None:
-            # Draw straight onto empty paper: create the joint as we go.
-            node_id = edit(self.canvas, "Add node", lambda m: m.add_node(*model_pos)).id
-        if self.start is None:
-            self.start = node_id
-            self.canvas.set_prompt("Now click the end joint. Escape to cancel.")
-            return True
-        if node_id != self.start:
-            start = self.start
-            member = edit(self.canvas, "Add member", lambda m: m.add_member(start, node_id))
-            if len(self.canvas.model.members) == 1 and not getattr(
-                self.canvas.model.sheet, "calibrated", False
-            ):
-                self.canvas.prompt_first_member_calibration(member)
-        # Chain: the end becomes the next start, so a frame draws in one go.
-        self.start = node_id
-        self.canvas.clear_preview()
-        return True
-
-    def move(self, scene_pos, model_pos) -> bool:
-        del scene_pos
-        if self.start is None:
-            return False
-        node = self.canvas.model.nodes.get(self.start)
-        if node is None:
-            return False
-        self.canvas.set_preview_line((node.x, node.y), model_pos)
-        return True
-
-    def key(self, key) -> bool:
-        if key in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter):
-            self.cancel()
-            return True
-        return False
 
 
 class SupportTool(Tool):
@@ -175,6 +115,35 @@ class AnchorTool(Tool):
         t = self.canvas.member_point_at(scene_pos, member_id)
         anchor = edit(self.canvas, "Add point", lambda m: m.add_anchor(member_id, t))
         self.canvas.select_entity("anchor", anchor.id)
+        return True
+
+
+class PivotTool(Tool):
+    name = "Pivot"
+    prompt = "Click a member to pivot it there. One click makes it a lever."
+    wants_member = True
+    snaps_to_grid = False  # its position is defined along the member instead
+
+    def click(self, scene_pos, model_pos) -> bool:
+        del model_pos
+        member_id = self.canvas.member_near(scene_pos)
+        if member_id is None:
+            return True
+        t = self.canvas.member_point_at(scene_pos, member_id)
+        info = {}
+
+        def build(m):
+            info.update(m.add_pivot(member_id, t))
+            return info
+
+        edit(self.canvas, "Add pivot", build)
+        if info:
+            self.canvas.select_entity("support", info["support"])
+            self.canvas.set_prompt(
+                "Pivot placed. Drag it along the bar to change the "
+                "mechanical advantage; the two sides stay in line because "
+                "they are one bar."
+            )
         return True
 
 
@@ -241,9 +210,8 @@ def build_tools(canvas):
 
     return [
         SelectTool(canvas),
-        NodeTool(canvas),
-        MemberTool(canvas),
         AnchorTool(canvas),
+        PivotTool(canvas),
         SupportTool(canvas, M.PIN),
         SupportTool(canvas, M.ROLLER_X),
         SupportTool(canvas, M.FIXED),

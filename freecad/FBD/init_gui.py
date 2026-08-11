@@ -18,10 +18,10 @@ class FBDWorkbench(Gui.Workbench):
 
     def Initialize(self):
         self.document = ["FBD_NewDiagram", "FBD_OpenDiagram", "FBD_ImportSketch", "FBD_SyncSketch"]
-        self.draw = ["FBD_ToolSelect", "FBD_ToolNode", "FBD_ToolMember", "FBD_ToolAnchor"]
+        self.draw = ["FBD_ToolSelect", "FBD_ToolAnchor"]
         self.supports = ["FBD_ToolPin", "FBD_ToolRoller", "FBD_ToolFixed", "FBD_ToolSpring"]
         self.loads = ["FBD_ToolForce", "FBD_ToolMoment", "FBD_ToolLineLoad"]
-        self.mechanism = ["FBD_ToolLever", "FBD_ToolMotor", "FBD_ToolActuator", "FBD_RunMotion"]
+        self.mechanism = ["FBD_ToolPivot", "FBD_ToolMotor", "FBD_ToolActuator", "FBD_RunMotion"]
         self.view = ["FBD_ToggleSnap", "FBD_FitView", "FBD_Solve", "FBD_ExportPDF"]
 
         # Main Toolbar
