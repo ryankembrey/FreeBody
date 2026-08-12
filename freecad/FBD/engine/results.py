@@ -18,7 +18,7 @@ never has to know a backend exists. Sign conventions, stated once:
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 import math
 
 
@@ -114,6 +114,7 @@ class MotionResult:
     mobility: int = 0
     frames: List[Frame] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
+    period: Optional[float] = None   # the natural loop length, if it has one
 
     @property
     def duration(self) -> float:

@@ -1124,8 +1124,19 @@ class MotionController:
             return
         step = self._motion_timer.interval() / 1000.0
         t = self.motion_time + step
-        if t > result.duration:
-            t = 0.0  # loop, which is what you want while adjusting
+        if result.period and result.period > 1e-6:
+            # The simulated segment is a whole number of natural cycles, so
+            # wrapping here lands exactly back on frame zero's own pose:
+            # nothing to see, which is the point.
+            t = t % result.period
+        elif t > result.duration:
+            # Nothing periodic to close the loop against (an EXTEND
+            # actuator, say): finish the run and hold there, rather than
+            # snapping back to a pose the mechanism never actually returns
+            # to on its own.
+            t = result.duration
+            self.playing = False
+            self._motion_timer.stop()
         self.motion_time = t
         try:
             self.motion_overlay.update()

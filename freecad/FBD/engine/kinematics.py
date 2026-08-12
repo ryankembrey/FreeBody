@@ -120,6 +120,65 @@ def actuator_length(actuator: Actuator, t: float, length0: float) -> Tuple[float
     return (length0 + stroke - sign * speed * (phase - travel_time), -sign * speed)
 
 
+def _mechanism_period(model: Model) -> Optional[float]:
+    """How long before every active driver's own profile exactly repeats.
+
+    A crank closes after one revolution, a cycling ram after one out-and-back,
+    a sweeping motor after one full rock: each has a length of time after
+    which its position and its direction of travel are exactly what they were
+    at t=0, not merely close to it. None means nothing here is periodic on
+    its own -- an actuator left at EXTEND runs once and stops, so there is no
+    length of time to loop a playback over without a seam.
+    """
+    periods: List[float] = []
+    for mo in model.motors.values():
+        omega = math.radians(mo.speed)
+        if abs(omega) < 1e-12:
+            continue
+        if mo.motion == SWEEP:
+            half = math.radians(abs(mo.sweep))
+            if half < 1e-9:
+                continue
+            periods.append(4.0 * half / abs(omega))
+        else:
+            periods.append(2.0 * math.pi / abs(omega))
+    for ac in model.actuators.values():
+        if ac.motion == EXTEND:
+            continue
+        stroke = abs(float(ac.stroke))
+        speed = abs(float(ac.speed))
+        if stroke < 1e-9 or speed < 1e-12:
+            continue
+        periods.append(2.0 * stroke / speed)  # CYCLE and SINE share this
+    if not periods:
+        return None
+    return _common_period(periods)
+
+
+def _common_period(periods: List[float], tol: float = 1e-6, max_cycles: int = 48) -> float:
+    """The shortest time after which every one of these periods lines up.
+
+    With one driver, the common case by far, this is just its own period.
+    With several, only the least common multiple closes every driver's cycle
+    at once, and that is unreliable to compute exactly on floats, so this
+    searches small integer multiples instead. If nothing lines up within the
+    search it settles for the longer of the two: an honest best effort, not
+    a guaranteed seamless loop, for the rare diagram with two drivers on
+    genuinely unrelated cycles.
+    """
+    result = periods[0]
+    for p in periods[1:]:
+        found = None
+        for n in range(1, max_cycles + 1):
+            candidate = n * p
+            multiple = round(candidate / result)
+            if multiple >= 1 and abs(candidate - multiple * result) <= tol * max(result, p):
+                found = multiple * result
+                break
+        result = found if found is not None else max(result, p)
+    return result
+
+
 # === the constraint system
 
 
@@ -573,7 +632,25 @@ def simulate(
 
     system = MechanismSystem(model)
     result.warnings = list(system.warnings)
-    duration = float(duration if duration is not None else model.motion.duration)
+    requested = float(duration if duration is not None else model.motion.duration)
+    period = _mechanism_period(model)
+    if period and 1e-6 < period:
+        # Round up to a whole number of cycles, so the last frame's pose is
+        # exactly the first frame's pose and playback can loop with nothing
+        # to see at the seam. Capped in absolute terms, not by how many
+        # cycles that takes, so an unusually slow driver can't balloon this
+        # into simulating minutes of frames nobody asked for.
+        cycles = max(1, round(requested / period))
+        candidate = cycles * period
+        if candidate <= 60.0:
+            duration = candidate
+        else:
+            duration = requested
+            period = None
+    else:
+        duration = requested
+        period = None
+    result.period = period
     fps = int(fps if fps is not None else model.motion.fps)
     fps = max(1, min(240, fps))
     steps = max(1, int(round(duration * fps)))
