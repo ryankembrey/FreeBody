@@ -148,6 +148,10 @@ class ViewProviderStructure:
                     return True
         return True
 
+    def claimChildren(self):
+        obj = getattr(self, "Object", None)
+        return getattr(obj, "Group", []) if obj and hasattr(obj, "Group") else []
+
     def __getstate__(self):
         return None
 
