@@ -250,7 +250,15 @@ class NodeItem(_Item):
         col = self.ink(S.INK)
         painter.setBrush(S.PAPER)
         painter.setPen(QtGui.QPen(col, 1.6))
-        painter.drawEllipse(QtCore.QPointF(0, 0), self.R, self.R)
+        if getattr(n, "rigid", False):
+            # Solid, not open: welded, the way a filled joint marker reads
+            # in ordinary engineering drawing convention, next to the open
+            # circle every hinged joint already uses.
+            painter.setBrush(col)
+            r = self.R * 0.82
+            painter.drawRect(QtCore.QRectF(-r, -r, 2 * r, 2 * r))
+        else:
+            painter.drawEllipse(QtCore.QPointF(0, 0), self.R, self.R)
         if self.canvas.show_labels:
             f = S.font(13.0)
             painter.setFont(f)
@@ -271,6 +279,15 @@ class NodeItem(_Item):
         )
         form.add_spin(
             "Y", node.y, lambda v: self.canvas.edit(lambda: setattr(node, "y", v)), suffix="mm"
+        )
+        form.add_combo(
+            "Connection",
+            [(False, "Free (hinges)"), (True, "Rigid (welded)")],
+            node.rigid,
+            lambda v: self.canvas.edit(lambda: setattr(node, "rigid", v), rebuild=True),
+            tooltip="Rigid welds every member meeting here into one body, without "
+                    "grounding the joint itself. For a joint fixed to the world, use "
+                    "a Fixed support instead.",
         )
         self.canvas.open_popup(self.anchor_point(), form)
 
@@ -1125,8 +1142,13 @@ def _overlay_bounds(canvas) -> QtCore.QRectF:
     rect = QtCore.QRectF(0.0, -sheet.height, sheet.width, sheet.height)
     nodes = canvas.model.nodes.values()
     if nodes:
-        xs = [n.x for n in nodes]
-        ys = [-n.y for n in nodes]
+        # Scene coordinates, not raw model ones -- the same fix as fit():
+        # a joint's real x, y can be real engineering mm, which is not the
+        # same number line as the paper-mm sheet this gets unioned with.
+        sc = getattr(canvas, "global_scale", 1.0)
+        pts = [to_scene(n.x, n.y, sc) for n in nodes]
+        xs = [p.x() for p in pts]
+        ys = [p.y() for p in pts]
         bounds = QtCore.QRectF(QtCore.QPointF(min(xs), min(ys)), QtCore.QPointF(max(xs), max(ys)))
         rect = rect.united(bounds)
 
@@ -1337,12 +1359,18 @@ class StructureBoundsOverlay(QtWidgets.QGraphicsItem):
                 painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
                 painter.drawRect(rect)
 
-                # Corner tick: the same resize hint used everywhere else.
-                painter.setPen(QtGui.QPen(S.SELECT, 1.1))
+                # Corner tick: pixel-constant regardless of zoom, unlike
+                # a raw scene-unit size which would render at a wildly
+                # different number of screen pixels depending on how far
+                # in the user happens to be looking right now.
+                tick_pen = QtGui.QPen(S.SELECT, 1.1)
+                tick_pen.setCosmetic(True)
+                painter.setPen(tick_pen)
                 for i in (4.0, 8.0, 12.0):
+                    d = self.canvas.px(i)
                     painter.drawLine(
-                        QtCore.QPointF(rect.right() - i, rect.bottom()),
-                        QtCore.QPointF(rect.right(), rect.bottom() - i),
+                        QtCore.QPointF(rect.right() - d, rect.bottom()),
+                        QtCore.QPointF(rect.right(), rect.bottom() - d),
                     )
 
         painter.restore()

@@ -117,6 +117,9 @@ class Node:
     source_geo: int = -1
     sx: float = 0.0
     sy: float = 0.0
+    rigid: bool = False  # every member meeting here is welded, not hinged --
+    # they move as one rigid body through this point. Not a ground: the joint
+    # itself is still free to translate and rotate unless separately supported.
 
     def xy(self) -> Tuple[float, float]:
         return (self.x, self.y)
@@ -616,6 +619,67 @@ class Model:
         for member in out.members.values():
             member.g *= weight_factor
         return out
+
+    def split_member(self, member_id: int, t: float, label: str = "") -> Optional[Node]:
+        """Cut a member in two at fraction t (0..1), with a real joint at
+        the cut, carrying over everything already attached to the original.
+
+        Used when something attaches to a point partway along an existing
+        member: the honest way to represent that is two collinear members
+        sharing a joint there -- exactly what every other part of this
+        engine already knows how to read, rather than a special "attached
+        to the middle" case everything downstream would need to learn too.
+
+        Refuses (returns None) if a motor or an actuator drives this
+        member: which half would still be "the" driven link is genuinely
+        ambiguous, and guessing wrong would silently break the mechanism.
+        """
+        member = self.members.get(member_id)
+        if member is None:
+            return None
+        if self.actuator_on(member_id) is not None or \
+                any(mo.member == member_id for mo in self.motors.values()):
+            return None
+        a, b = self.nodes.get(member.start), self.nodes.get(member.end)
+        if a is None or b is None:
+            return None
+        t = max(0.02, min(0.98, float(t)))
+        nx, ny = a.x + t * (b.x - a.x), a.y + t * (b.y - a.y)
+        node = self.add_node(nx, ny, label)
+
+        part1 = self.add_member(
+            member.start, node.id, EA=member.EA, EI=member.EI,
+            release_start=member.release_start, release_end=False,
+            k_start=member.k_start, k_end=0.0,
+            mp_start=member.mp_start, mp_end=0.0,
+            behaviour=member.behaviour, g=member.g, mass=member.mass * t,
+            source_geo=member.source_geo,
+        )
+        part2 = self.add_member(
+            node.id, member.end, EA=member.EA, EI=member.EI,
+            release_start=False, release_end=member.release_end,
+            k_start=0.0, k_end=member.k_end,
+            mp_start=0.0, mp_end=member.mp_end,
+            behaviour=member.behaviour, g=member.g, mass=member.mass * (1.0 - t),
+            source_geo=member.source_geo,
+        )
+        part1.label, part2.label = f"{member.label}a", f"{member.label}b"
+
+        for anchor in [a for a in self.anchors.values() if a.member == member_id]:
+            if anchor.t <= t:
+                anchor.member = part1.id
+                anchor.t = anchor.t / t if t > 1e-9 else 0.0
+            else:
+                anchor.member = part2.id
+                anchor.t = (anchor.t - t) / (1.0 - t) if t < 1.0 - 1e-9 else 1.0
+
+        for line in [l for l in self.line_loads.values() if l.member == member_id]:
+            line.member = part1.id
+            dup = self.add_line_load(part2.id, line.q, line.direction)
+            dup.label = line.label
+
+        del self.members[member_id]
+        return node
 
     def add_pivot(self, member: int, t: float = 0.5) -> dict:
         """Turn a point on an existing member into a pivot, in one step.

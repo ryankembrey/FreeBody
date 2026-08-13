@@ -204,6 +204,8 @@ def import_sketch(model, sketch, link: bool = True) -> Tuple[List, List]:
             % (", ".join(sorted(skipped)), getattr(sketch, "Label", sketch))
         )
 
+    attach_loose_endpoints(model)
+
     if link:
         model.sketch_link = SketchLink(
             object_name=getattr(sketch, "Name", ""),
@@ -399,9 +401,82 @@ def resync(model, sketch) -> SyncReport:
         else:
             model.delete("node", nid)
 
+    attach_loose_endpoints(model)
+
     report.ok = True
     report.message = report.summary()
     return report
+
+
+def attach_loose_endpoints(model, tol: float = COINCIDENT_TOL) -> int:
+    """Find joints that visually sit on the interior of some other member
+    and were never actually connected to it, and connect them.
+
+    This is what makes "one line's endpoint touches the middle of another
+    line" behave as an attachment rather than two separate structures --
+    exactly the shape a sketch produces when a lever's pivot arm is drawn
+    onto an existing bar, since Sketcher itself has no notion that this
+    should be a mechanical joint. Splits the host member at that point and
+    folds the loose joint into the new shared one, so nothing downstream
+    needs to know the attachment wasn't there from the start.
+
+    Only considers points in a member's true interior (t strictly between
+    0.02 and 0.98): anything nearer an end is what the ordinary endpoint
+    coincidence matching already handles, and treating both the same way
+    would risk splitting a member a hair's width from a joint it already
+    shares. Runs to a fixed point, in case attaching one joint brings a
+    second one onto a now-different member.
+    """
+    made = 0
+    changed = True
+    while changed:
+        changed = False
+        for node_id, node in list(model.nodes.items()):
+            best = None
+            for member in model.members.values():
+                if member.start == node_id or member.end == node_id:
+                    continue
+                a = model.nodes.get(member.start)
+                b = model.nodes.get(member.end)
+                if a is None or b is None:
+                    continue
+                dx, dy = b.x - a.x, b.y - a.y
+                length_sq = dx * dx + dy * dy
+                if length_sq < 1e-9:
+                    continue
+                t = ((node.x - a.x) * dx + (node.y - a.y) * dy) / length_sq
+                if t <= 0.02 or t >= 0.98:
+                    continue
+                px, py = a.x + t * dx, a.y + t * dy
+                dist = math.hypot(node.x - px, node.y - py)
+                if dist <= tol and (best is None or dist < best[2]):
+                    best = (member.id, t, dist)
+            if best is None:
+                continue
+            member_id, t, _dist = best
+            new_node = model.split_member(member_id, t)
+            if new_node is None:
+                continue
+            for m in model.members.values():
+                if m.start == node_id:
+                    m.start = new_node.id
+                elif m.end == node_id:
+                    m.end = new_node.id
+            for s in model.supports.values():
+                if s.node == node_id:
+                    s.node = new_node.id
+            for coll in (model.point_loads, model.moment_loads):
+                for load in coll.values():
+                    if load.node == node_id:
+                        load.node = new_node.id
+            for mo in model.motors.values():
+                if mo.node == node_id:
+                    mo.node = new_node.id
+            del model.nodes[node_id]
+            made += 1
+            changed = True
+            break
+    return made
 
 
 def find_linked_sketch(model, doc):

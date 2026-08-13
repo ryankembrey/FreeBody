@@ -288,8 +288,6 @@ class Editor(QtWidgets.QWidget, MotionController):
         self.scene.addItem(self.result_overlay)
         self.results_overlay = I.ResultsTableOverlay(self)
         self.scene.addItem(self.results_overlay)
-        self.diagram_resize = I.DiagramResizeOverlay(self)
-        self.scene.addItem(self.diagram_resize)
 
         self.tools = build_tools(self)
         self.tool = self.tools[0]
@@ -504,7 +502,7 @@ class Editor(QtWidgets.QWidget, MotionController):
             (max(ys) - min(ys)) + 2 * pad,
         )
 
-    def _is_near_box_corner(self, scene_pos, rect, tol_pixels=10.0) -> bool:
+    def _is_near_box_corner(self, scene_pos, rect, tol_pixels=14.0) -> bool:
         tol = self.px(tol_pixels)
         corner = QtCore.QPointF(rect.right(), rect.bottom())
         return math.hypot(scene_pos.x() - corner.x(), scene_pos.y() - corner.y()) <= tol
@@ -518,10 +516,16 @@ class Editor(QtWidgets.QWidget, MotionController):
     def _find_component_at(self, scene_pos):
         from ..engine.checks import _components
 
+        # Padded by the corner hit-zone: that hit-zone is a circle centred
+        # on the rect's own corner, so half of it sits just outside the
+        # strict rect -- exactly where hovering to grab a corner naturally
+        # lands. Without this, that whole outer half was rejected before
+        # the corner check ever ran, which is why the cursor never changed.
+        tol = self.px(14.0)
         components = _components(self.model)
         for comp in components:
             rect = self._component_bounds(comp)
-            if rect.contains(scene_pos):
+            if rect.adjusted(-tol, -tol, tol, tol).contains(scene_pos):
                 return comp, rect
         return None, None
 
@@ -734,6 +738,8 @@ class Editor(QtWidgets.QWidget, MotionController):
             except RuntimeError:
                 pass
 
+        print("DEBUG tool=", self.tool.name, "comp=", bool(comp), "rect=", rect,
+              "corner=", bool(comp and rect and self._is_near_box_corner(scene_pos, rect)))
         # Three states, so hovering always previews what a click-drag would
         # actually do here: resize at the corner, move at the edge or on a
         # joint of its own, arrow otherwise.
@@ -1030,13 +1036,6 @@ class Editor(QtWidgets.QWidget, MotionController):
             except RuntimeError:
                 pass
 
-        if hasattr(self, "diagram_resize"):
-            try:
-                self.diagram_resize.prepareGeometryChange()
-                self.diagram_resize.update()
-            except RuntimeError:
-                pass
-
         if hasattr(self, "hud"):
             try:
                 self.hud.sync_state()
@@ -1067,8 +1066,16 @@ class Editor(QtWidgets.QWidget, MotionController):
     def fit(self):
         rect = self.scene.sheet_rect()
         if self.model.nodes:
-            xs = [n.x for n in self.model.nodes.values()]
-            ys = [-n.y for n in self.model.nodes.values()]
+            # Scene coordinates, not raw model ones: a sketch-imported
+            # diagram's unit_scale can be large, so a joint's real x, y is
+            # real engineering mm while the page itself is drawn in much
+            # smaller paper mm. Comparing the two directly is exactly what
+            # made fit() zoom out to the size of the steel instead of the
+            # size of the page.
+            sc = self.unit_scale
+            pts = [I.to_scene(n.x, n.y, sc) for n in self.model.nodes.values()]
+            xs = [p.x() for p in pts]
+            ys = [p.y() for p in pts]
             drawn = QtCore.QRectF(
                 QtCore.QPointF(min(xs), min(ys)), QtCore.QPointF(max(xs), max(ys))
             )
@@ -1251,62 +1258,6 @@ class Editor(QtWidgets.QWidget, MotionController):
     @property
     def global_scale(self):
         return self.unit_scale
-
-    def diagram_bounds_model(self):
-        """Bounding box of every joint, in real model mm. None if empty."""
-        if not self.model.nodes:
-            return None
-        xs = [n.x for n in self.model.nodes.values()]
-        ys = [n.y for n in self.model.nodes.values()]
-        return min(xs), min(ys), max(xs), max(ys)
-
-    def begin_diagram_resize(self):
-        """Snapshot everything the resize gesture needs, once, at the grab."""
-        bounds = self.diagram_bounds_model()
-        if bounds is None:
-            return False
-        self._resize_initial = {nid: (n.x, n.y) for nid, n in self.model.nodes.items()}
-        self._resize_start_scale = self.unit_scale
-        min_x, min_y, max_x, max_y = bounds
-        self._resize_centroid = ((min_x + max_x) / 2.0, (min_y + max_y) / 2.0)
-        self._resize_corner0 = (max_x, min_y)
-        self.push_undo("Resize diagram")
-        return True
-
-    def update_diagram_resize(self, scene_pos):
-        """Rescale about the drag-start centroid, from a live mouse position.
-
-        Only sheet.unit_scale and a rigid translation ever change: no joint's
-        real distance to any other joint moves, so the physics stays exactly
-        what the sketch said it was regardless of how the page reads it.
-        """
-        if not getattr(self, "_resize_initial", None):
-            return
-        cx, cy = self._resize_centroid
-        s0 = self._resize_start_scale
-        anchor = I.to_scene(cx, cy, s0)
-        corner0 = I.to_scene(self._resize_corner0[0], self._resize_corner0[1], s0)
-        start_len = math.hypot(corner0.x() - anchor.x(), corner0.y() - anchor.y())
-        if start_len < 1e-6:
-            return
-        new_len = math.hypot(scene_pos.x() - anchor.x(), scene_pos.y() - anchor.y())
-        ratio = max(0.05, min(20.0, new_len / start_len))
-        new_scale = max(1e-6, s0 / ratio)
-
-        dx = anchor.x() * new_scale - cx
-        dy = -anchor.y() * new_scale - cy
-        for nid, (ix, iy) in self._resize_initial.items():
-            node = self.model.nodes.get(nid)
-            if node:
-                node.x, node.y = ix + dx, iy + dy
-        self.model.sheet.unit_scale = new_scale
-        self.invalidate_result()
-        self.refresh_geometry()
-
-    def end_diagram_resize(self):
-        if getattr(self, "_resize_initial", None):
-            self._resize_initial = None
-            self.model_changed()
 
     def prompt_first_member_calibration(self, member):
         drawn_len = self.model.member_length(member)

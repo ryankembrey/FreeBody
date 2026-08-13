@@ -368,6 +368,33 @@ class MechanismSystem:
                 }
             )
 
+        # A welded, ungrounded joint: every member meeting here moves as
+        # one rigid body through this point rather than hinging. A "star"
+        # of virtual, invisible length constraints from one far end to
+        # every other far end -- the same reason a diagonal brace stops a
+        # truss bay from racking, reused rather than inventing a new
+        # constraint kind. N members meeting at a point need only N-1
+        # braces to fix every angle between them; a full pairwise set
+        # would just be redundant.
+        for node_id, node in model.nodes.items():
+            if not getattr(node, "rigid", False) or node_id not in self.index:
+                continue
+            far_ends = []
+            for m in model.members.values():
+                if m.start == node_id and m.end in self.index:
+                    far_ends.append(m.end)
+                elif m.end == node_id and m.start in self.index:
+                    far_ends.append(m.start)
+            if len(far_ends) < 2:
+                continue
+            ref = far_ends[0]
+            rx, ry = model.nodes[ref].xy()
+            for other in far_ends[1:]:
+                ox, oy = model.nodes[other].xy()
+                length0 = math.hypot(ox - rx, oy - ry)
+                self.rows.append({"kind": _LENGTH, "member": None, "a": ref,
+                                  "b": other, "length": length0, "actuator": None})
+
         for s in model.supports.values():
             if s.anchor is not None:
                 anchor = model.anchors.get(s.anchor)
@@ -768,7 +795,8 @@ def _frame_forces(model: Model, system: "MechanismSystem", q, extra_load=None):
             # as an ordinary force; tension positive, matching every other
             # axial number this addon reports.
             force = -lam[i] * length
-            axial[row["member"]] = force
+            if row["member"] is not None:
+                axial[row["member"]] = force
             if row["actuator"] is not None:
                 effort[row["actuator"]] = -force   # push positive, matching _driver_effort
         elif kind == _MOTOR:
