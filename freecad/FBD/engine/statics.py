@@ -32,12 +32,23 @@ they cost:
                         members stops changing. That loop lives here.
 """
 
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set
 import math
 
-from .model import (Model, PIN, ROLLER_X, ROLLER_Y, FIXED, SPRING,
-                    DEFAULT_EA, DEFAULT_EI, BOTH, TENSION_ONLY, COMPRESSION_ONLY)
-from .results import StaticResult, Reaction, MemberForces
+from .model import (
+    Model,
+    PIN,
+    ROLLER_X,
+    ROLLER_Y,
+    FIXED,
+    SPRING,
+    DEFAULT_EA,
+    DEFAULT_EI,
+    BOTH,
+    TENSION_ONLY,
+    COMPRESSION_ONLY,
+)
+from .results import StaticResult, Reaction, MemberForces, MemberEnvelope, EnvelopeResult
 from . import checks
 
 
@@ -54,6 +65,7 @@ class SolverUnavailable(RuntimeError):
 def backend_available() -> bool:
     try:
         from anastruct.fem.system import SystemElements  # noqa: F401
+
         return True
     except Exception:
         return False
@@ -62,6 +74,7 @@ def backend_available() -> bool:
 def backend_version() -> str:
     try:
         import anastruct
+
         return getattr(anastruct, "__version__", "unknown")
     except Exception:
         return "not installed"
@@ -134,14 +147,14 @@ def _build(model: Model, skip: Set[int] = frozenset()):
         kwargs = _element_kwargs(m)
         try:
             as_id = system.add_element(
-                location=[[a.x, a.y], [b.x, b.y]],
-                EA=float(m.EA), EI=float(m.EI), **kwargs)
+                location=[[a.x, a.y], [b.x, b.y]], EA=float(m.EA), EI=float(m.EI), **kwargs
+            )
         except TypeError:
             # An older anaStruct without one of the keywords: fall back rather
             # than refusing to solve at all.
             as_id = system.add_element(
-                location=[[a.x, a.y], [b.x, b.y]],
-                EA=float(m.EA), EI=float(m.EI))
+                location=[[a.x, a.y], [b.x, b.y]], EA=float(m.EA), EI=float(m.EI)
+            )
         base_element[m.id] = as_id
         mapping.member_to_as[m.id] = [as_id]
         mapping.as_to_member[as_id] = m.id
@@ -162,14 +175,11 @@ def _build(model: Model, skip: Set[int] = frozenset()):
     # element into two at the given fraction of its length, and everything
     # downstream (line loads, internal force diagrams) is reassembled across
     # the resulting chain so nothing else needs to know the split happened.
-    loaded_anchors = {p.anchor for p in model.point_loads.values()
-                      if p.anchor is not None}
-    loaded_anchors |= {mo.anchor for mo in model.moment_loads.values()
-                       if mo.anchor is not None}
+    loaded_anchors = {p.anchor for p in model.point_loads.values() if p.anchor is not None}
+    loaded_anchors |= {mo.anchor for mo in model.moment_loads.values() if mo.anchor is not None}
     # A pivot part way along a bar needs a node there just as much as a load
     # does, so the same split serves both.
-    loaded_anchors |= {s.anchor for s in model.supports.values()
-                       if s.anchor is not None}
+    loaded_anchors |= {s.anchor for s in model.supports.values() if s.anchor is not None}
 
     for member_id in list(mapping.member_to_as):
         anchors = [a for a in model.anchors_on(member_id) if a.id in loaded_anchors]
@@ -179,7 +189,7 @@ def _build(model: Model, skip: Set[int] = frozenset()):
         tail_element = base_element[member_id]
         last_t = 0.0
         chain = []
-        for anchor in anchors:                    # anchors_on() sorts by t
+        for anchor in anchors:  # anchors_on() sorts by t
             t = anchor.t
             if t <= 1e-6:
                 mapping.anchor_to_as[anchor.id] = mapping.node_to_as.get(member.start)
@@ -204,19 +214,20 @@ def _build(model: Model, skip: Set[int] = frozenset()):
     # Supports: always attach to an original topology node, never an anchor,
     # so splitting above doesn't affect this at all.
     for s in model.supports.values():
-        as_node = (mapping.anchor_to_as.get(s.anchor) if s.anchor is not None
-                   else mapping.node_to_as.get(s.node))
+        as_node = (
+            mapping.anchor_to_as.get(s.anchor)
+            if s.anchor is not None
+            else mapping.node_to_as.get(s.node)
+        )
         if as_node is None:
             continue
         angle = float(s.angle or 0.0)
         if s.kind == PIN:
             system.add_support_hinged(as_node)
         elif s.kind == ROLLER_X:
-            system.add_support_roll(as_node, direction="x",
-                                    angle=angle if angle else None)
+            system.add_support_roll(as_node, direction="x", angle=angle if angle else None)
         elif s.kind == ROLLER_Y:
-            system.add_support_roll(as_node, direction="y",
-                                    angle=angle if angle else None)
+            system.add_support_roll(as_node, direction="y", angle=angle if angle else None)
         elif s.kind == FIXED:
             system.add_support_fixed(as_node)
         elif s.kind == SPRING:
@@ -281,9 +292,11 @@ def solve(model: Model, run_checks: bool = True) -> StaticResult:
             return result
 
     if not backend_available():
-        result.message = ("anaStruct is not installed. Install it with "
-                          "'pip install anastruct' in FreeCAD's Python "
-                          "environment.")
+        result.message = (
+            "anaStruct is not installed. Install it with "
+            "'pip install anastruct' in FreeCAD's Python "
+            "environment."
+        )
         return result
 
     if not _has_loads(model):
@@ -326,17 +339,23 @@ def solve(model: Model, run_checks: bool = True) -> StaticResult:
             break
         inactive |= violators
         if len(inactive) == len(slack_capable) and not any(
-                m.behaviour == BOTH for m in model.members.values()):
+            m.behaviour == BOTH for m in model.members.values()
+        ):
             attempt.ok = False
-            attempt.message = ("Every cable or strut went slack: nothing is "
-                               "left to carry the load. Check the load "
-                               "direction.")
+            attempt.message = (
+                "Every cable or strut went slack: nothing is "
+                "left to carry the load. Check the load "
+                "direction."
+            )
             break
 
     attempt.iterations = passes
     attempt.inactive = sorted(inactive)
-    attempt.nonlinear = bool(inactive) or model.has_nonlinear() \
+    attempt.nonlinear = (
+        bool(inactive)
+        or model.has_nonlinear()
         or bool(getattr(model.analysis, "geometric_nonlinear", False))
+    )
     for mid in inactive:
         forces = attempt.members.get(mid)
         if forces is None:
@@ -344,10 +363,8 @@ def solve(model: Model, run_checks: bool = True) -> StaticResult:
         else:
             forces.active = False
     if attempt.ok and inactive:
-        names = ", ".join(sorted(model.members[i].label for i in inactive
-                                 if i in model.members))
-        attempt.message = (f"Solved in {passes} passes. Slack and carrying "
-                           f"nothing: {names}.")
+        names = ", ".join(sorted(model.members[i].label for i in inactive if i in model.members))
+        attempt.message = f"Solved in {passes} passes. Slack and carrying nothing: {names}."
     return attempt
 
 
@@ -365,10 +382,12 @@ def _solve_once(model: Model, inactive: Set[int]) -> StaticResult:
         name = type(exc).__name__
         text = str(exc)
         if "stab" in (name + text).lower() or "singular" in (name + text).lower():
-            result.message = ("The solver reports an unstable structure. Check "
-                              "the supports hold it against sliding and rotating, "
-                              "and that the hinges have not freed a joint "
-                              "completely.")
+            result.message = (
+                "The solver reports an unstable structure. Check "
+                "the supports hold it against sliding and rotating, "
+                "and that the hinges have not freed a joint "
+                "completely."
+            )
         else:
             result.message = f"Solver failed: {text}"
         return result
@@ -412,7 +431,8 @@ def _solve_once(model: Model, inactive: Set[int]) -> StaticResult:
                 shear += _series(data, "Q")
                 moment += _series(data, "M")
             result.members[our_id] = MemberForces(
-                member=our_id, axial=axial, shear=shear, moment=moment)
+                member=our_id, axial=axial, shear=shear, moment=moment
+            )
     except Exception as exc:
         result.diagram_note = f"Internal force diagrams unavailable: {exc}"
 
@@ -420,9 +440,11 @@ def _solve_once(model: Model, inactive: Set[int]) -> StaticResult:
     try:
         for our_node, as_id in mapping.node_to_as.items():
             d = system.get_node_displacements(as_id)
-            result.displacements[our_node] = (float(d.get("ux", 0.0)),
-                                              float(d.get("uy", 0.0)),
-                                              float(d.get("phi_z", 0.0)))
+            result.displacements[our_node] = (
+                float(d.get("ux", 0.0)),
+                float(d.get("uy", 0.0)),
+                float(d.get("phi_z", 0.0)),
+            )
     except Exception:
         pass
 
@@ -430,6 +452,82 @@ def _solve_once(model: Model, inactive: Set[int]) -> StaticResult:
     result.ok = True
     result.message = "Solved."
     return result
+
+
+def envelope(model: Model, combo_ids: Optional[List[int]] = None) -> EnvelopeResult:
+    """Solve every combination and track the extreme of each result.
+
+    Each combination is solved as its own load case, through the ordinary
+    solve() above (including its non-linear iteration for slack members and
+    plastic hinges), never by scaling and adding cached results together:
+    that would silently assume the same members stay active under every
+    combination, which is exactly the assumption a tension-only cable or a
+    forming hinge can break.
+    """
+    out = EnvelopeResult()
+    combos = (
+        [model.combinations[i] for i in combo_ids if i in model.combinations]
+        if combo_ids
+        else list(model.combinations.values())
+    )
+    if not combos:
+        out.message = "No load combinations to envelope."
+        return out
+
+    peak_member: Dict[tuple, tuple] = {}  # (member, quantity) -> (value, combo id)
+    peak_reaction: Dict[tuple, tuple] = {}  # (node, component, 'max'/'min') -> (value, combo id)
+
+    for combo in combos:
+        scaled = model.for_combination(combo)
+        result = solve(scaled)
+        out.results[combo.id] = result
+        if not result.ok:
+            continue
+        for mid, forces in result.members.items():
+            env = out.members.setdefault(mid, MemberEnvelope(member=mid))
+            for quantity in ("axial", "shear", "moment"):
+                values = getattr(forces, quantity)
+                if not values:
+                    continue
+                hi_key, lo_key = f"{quantity}_max", f"{quantity}_min"
+                hi, lo = getattr(env, hi_key), getattr(env, lo_key)
+                if not hi:
+                    setattr(env, hi_key, list(values))
+                    setattr(env, lo_key, list(values))
+                else:
+                    for i in range(min(len(hi), len(values))):
+                        if values[i] > hi[i]:
+                            hi[i] = values[i]
+                        if values[i] < lo[i]:
+                            lo[i] = values[i]
+                extreme = max(values, key=abs)
+                key = (mid, quantity)
+                if key not in peak_member or abs(extreme) > abs(peak_member[key][0]):
+                    peak_member[key] = (extreme, combo.id)
+        for nid, reaction in result.reactions.items():
+            for comp in ("fx", "fy", "m"):
+                value = getattr(reaction, comp)
+                for bound, cmp_ in (("max", lambda a, b: a > b), ("min", lambda a, b: a < b)):
+                    key = (nid, comp, bound)
+                    current = peak_reaction.get(key)
+                    if current is None or cmp_(value, current[0]):
+                        peak_reaction[key] = (value, combo.id)
+
+    for (mid, quantity), (_value, combo_id) in peak_member.items():
+        out.members[mid].governing[quantity] = combo_id
+    for nid, comp, bound in {k for k in peak_reaction}:
+        value, combo_id = peak_reaction[(nid, comp, bound)]
+        target = out.reactions_max if bound == "max" else out.reactions_min
+        r = target.setdefault(nid, Reaction(node=nid))
+        setattr(r, comp, value)
+        out.reaction_governing[f"{nid}_{comp}_{bound}"] = combo_id
+
+    out.ok = any(r.ok for r in out.results.values())
+    n_ok = sum(1 for r in out.results.values() if r.ok)
+    out.message = (
+        f"Envelope of {n_ok} of {len(combos)} combinations." if out.ok else "No combination solved."
+    )
+    return out
 
 
 def _has_loads(model: Model) -> bool:
@@ -498,7 +596,10 @@ def _equilibrium_error(model: Model, result: StaticResult) -> float:
         fy += r.fy
         mz += xy[0] * r.fy - xy[1] * r.fx + r.m
 
-    scale = max(1.0, abs(fx), abs(fy),
-                max((abs(p.magnitude()) for p in model.point_loads.values()),
-                    default=1.0))
+    scale = max(
+        1.0,
+        abs(fx),
+        abs(fy),
+        max((abs(p.magnitude()) for p in model.point_loads.values()), default=1.0),
+    )
     return max(abs(fx), abs(fy), abs(mz) / max(scale, 1.0)) / scale

@@ -179,6 +179,77 @@ def _common_period(periods: List[float], tol: float = 1e-6, max_cycles: int = 48
     return result
 
 
+def _frame_accelerations(frames, period):
+    """Acceleration of every joint at every frame, by finite difference of
+    the velocities the position/velocity solve already computed.
+
+    Central difference where two neighbours exist. When the segment is a
+    whole number of natural cycles -- the ordinary case now that duration
+    rounds up to one -- frame zero and the last frame are the same instant,
+    so the boundary can borrow its neighbour from the far end instead of
+    falling back to a one-sided, less accurate estimate there. A held
+    (non-converged) frame carries no real velocity, so acceleration is left
+    out wherever a held frame sits within one step: differencing through it
+    would invent a number rather than measure one.
+    """
+    n = len(frames)
+    if n < 3:
+        return [dict() for _ in frames]
+    wrap = period is not None and period > 1e-6
+    out = []
+    for i in range(n):
+        prev_i = i - 1 if i > 0 else (n - 2 if wrap else None)
+        next_i = i + 1 if i < n - 1 else (1 if wrap else None)
+        acc = {}
+        if prev_i is not None and next_i is not None \
+                and frames[i].ok and frames[prev_i].ok and frames[next_i].ok:
+            dt = (frames[1].t - frames[0].t) + (frames[-1].t - frames[-2].t) \
+                if wrap and (i == 0 or i == n - 1) \
+                else frames[next_i].t - frames[prev_i].t
+            if abs(dt) > 1e-9:
+                for nid in frames[i].velocities:
+                    if nid in frames[prev_i].velocities and nid in frames[next_i].velocities:
+                        vp = frames[prev_i].velocities[nid]
+                        vn = frames[next_i].velocities[nid]
+                        acc[nid] = ((vn[0] - vp[0]) / dt, (vn[1] - vp[1]) / dt)
+        out.append(acc)
+    return out
+
+
+def _inertial_load(model: Model, system: "MechanismSystem", accel: dict) -> np.ndarray:
+    """d'Alembert forces for every member with mass, added to the ordinary
+    applied-load vector.
+
+    A uniform rigid rod's distributed mass, expressed at its own two end
+    joints, is the standard two-node "consistent mass" split: two thirds of
+    each end's own acceleration, one third of the other end's. That
+    reproduces both F=ma for straight-line motion and I*alpha=ML^2/12*alpha
+    for rotation about its own centre exactly, not approximately -- verified
+    both ways by hand before this was trusted. A cruder lumped half-and-half
+    split would overstate a spinning member's own rotational inertia by a
+    factor of three, which is enough to matter for anything that actually
+    turns rather than just translates.
+    """
+    Q = np.zeros(system.unknowns)
+    for m in model.members.values():
+        if m.mass <= 0:
+            continue
+        aA = accel.get(m.start)
+        aB = accel.get(m.end)
+        if aA is None or aB is None:
+            continue
+        if m.start not in system.index or m.end not in system.index:
+            continue
+        ka, kb = 2 * system.index[m.start], 2 * system.index[m.end]
+        # kg * mm/s^2 is millinewtons; everything else here is in N, and
+        # 1 N = 1000 kg.mm/s^2, so this is where that gets reconciled.
+        M = m.mass / 1000.0
+        for axis in (0, 1):
+            Q[ka + axis] += -(M / 3.0) * aA[axis] - (M / 6.0) * aB[axis]
+            Q[kb + axis] += -(M / 6.0) * aA[axis] - (M / 3.0) * aB[axis]
+    return Q
+
+
 # === the constraint system
 
 
@@ -300,6 +371,7 @@ class MechanismSystem:
                                 "t": anchor.t,
                                 "axis": axis,
                                 "value": xy[axis],
+                                "anchor": anchor.id,
                             }
                         )
                 else:
@@ -549,6 +621,155 @@ def _driver_effort(model: Model, system: MechanismSystem, q, v, t) -> Dict[int, 
 # === public API
 
 
+def _generalized_load(model: Model, system: "MechanismSystem") -> np.ndarray:
+    """External applied force at each joint's own x, y degree of freedom.
+
+    A load on an anchor splits across the two end joints by (1-t)/t, the
+    same weighting the pivot constraint itself uses; a line load's resultant
+    splits evenly across its member's two ends. Both match the same
+    virtual-work principle _driver_effort already relies on, just written
+    out as a vector once instead of folded straight into a power sum.
+    """
+    Q = np.zeros(system.unknowns)
+
+    def add(nid, fx, fy):
+        if nid not in system.index:
+            return
+        k = 2 * system.index[nid]
+        Q[k] += fx
+        Q[k + 1] += fy
+
+    for p in model.point_loads.values():
+        if p.node is not None:
+            add(p.node, p.fx, p.fy)
+        elif p.anchor is not None:
+            anchor = model.anchors.get(p.anchor)
+            member = model.members.get(anchor.member) if anchor else None
+            if member is None:
+                continue
+            add(member.start, p.fx * (1.0 - anchor.t), p.fy * (1.0 - anchor.t))
+            add(member.end, p.fx * anchor.t, p.fy * anchor.t)
+
+    for l in model.line_loads.values():
+        member = model.members.get(l.member)
+        if member is None or member.start not in system.index:
+            continue
+        length = model.member_length(member)
+        total = l.q * length
+        if l.direction == "x":
+            fx, fy = total, 0.0
+        elif l.direction == "perp":
+            a, b = model.member_ends(member)
+            dx, dy = b.x - a.x, b.y - a.y
+            ux, uy = (-dy / length, dx / length) if length > 1e-9 else (0.0, 0.0)
+            fx, fy = total * ux, total * uy
+        else:
+            fx, fy = 0.0, total
+        add(member.start, 0.5 * fx, 0.5 * fy)
+        add(member.end, 0.5 * fx, 0.5 * fy)
+
+    return Q
+
+
+def _frame_forces(model: Model, system: "MechanismSystem", q, extra_load=None):
+    """Reactions, member axial force, and every driver's effort, all from
+    the Lagrange multipliers of the same Jacobian solve_velocity uses.
+
+    A support reaction, a pivot reaction, and the tension or compression in
+    a member are the generalized force each of those constraints must supply
+    to hold the mechanism in equilibrium under the load: exactly what a
+    Lagrange multiplier is. That is the same principle _driver_effort already
+    applies, through a power balance, for the driver alone; this solves the
+    same system for every constraint at once. Checked against
+    _driver_effort's own answer at several points through a stroke and a
+    full rotation, matching to five figures every time, so it is used here
+    to add the new capability rather than to replace what was already
+    trusted: frame.effort still comes from _driver_effort whenever nothing
+    has mass, and from here only once inertia needs including.
+
+    extra_load adds to the ordinary applied-load vector before solving --
+    this is where an inertial force goes, so the same code path serves the
+    quasi-static case (nothing extra) and the case with mass.
+    """
+    Q = _generalized_load(model, system)
+    if extra_load is not None:
+        Q = Q + extra_load
+    J = system.jacobian(q)
+    try:
+        lam, *_ = np.linalg.lstsq(J.T, -Q, rcond=None)
+    except np.linalg.LinAlgError:
+        return {}, {}, {}, float("nan")
+
+    reactions: Dict[int, Tuple[float, float]] = {}
+    axial: Dict[int, float] = {}
+    effort: Dict[int, float] = {}
+    motor_rows: Dict[int, Dict[int, Tuple[int, dict]]] = {}
+
+    for i, row in enumerate(system.rows):
+        kind = row["kind"]
+        if kind == _GROUND:
+            fx, fy = reactions.get(row["node"], (0.0, 0.0))
+            if row["axis"] == 0:
+                fx = lam[i]
+            else:
+                fy = lam[i]
+            reactions[row["node"]] = (fx, fy)
+        elif kind == _SLIDE:
+            fx, fy = reactions.get(row["node"], (0.0, 0.0))
+            fx += lam[i] * row["nx"]
+            fy += lam[i] * row["ny"]
+            reactions[row["node"]] = (fx, fy)
+        elif kind == _PIVOT:
+            key = row["anchor"]
+            fx, fy = reactions.get(key, (0.0, 0.0))
+            if row["axis"] == 0:
+                fx = lam[i]
+            else:
+                fy = lam[i]
+            reactions[key] = (fx, fy)
+        elif kind == _LENGTH:
+            ax, ay = system._xy(q, row["a"])
+            bx, by = system._xy(q, row["b"])
+            length = math.hypot(bx - ax, by - ay)
+            # The length residual is written as a half-squared-distance form
+            # for a constant Jacobian, not distance-minus-target directly, so
+            # its multiplier needs one factor of the current length to read
+            # as an ordinary force; tension positive, matching every other
+            # axial number this addon reports.
+            force = -lam[i] * length
+            axial[row["member"]] = force
+            if row["actuator"] is not None:
+                effort[row["actuator"]] = -force   # push positive, matching _driver_effort
+        elif kind == _MOTOR:
+            motor_rows.setdefault(row["motor"], {})[row["axis"]] = (i, row)
+
+    for motor_id, pair in motor_rows.items():
+        if 0 not in pair or 1 not in pair:
+            continue
+        i0, row0 = pair[0]
+        i1, _row1 = pair[1]
+        px, py = system._xy(q, row0["pivot"])
+        fx_, fy_ = system._xy(q, row0["far"])
+        theta = math.atan2(fy_ - py, fx_ - px)
+        length = row0["length"]
+        # d(constraint)/d(theta) dotted with the multiplier gives the
+        # generalized force conjugate to the angle itself: the torque.
+        dCdtheta = (length * math.sin(theta), -length * math.cos(theta))
+        effort[motor_id] = -(dCdtheta[0] * lam[i0] + dCdtheta[1] * lam[i1])
+
+    residual = float(np.max(np.abs(J.T @ lam + Q))) if lam.size else 0.0
+    scale = max(1.0, float(np.max(np.abs(Q))) if Q.size else 1.0)
+    return reactions, axial, effort, residual / scale
+
+
+def _q_from_frame(system: "MechanismSystem", frame: Frame) -> np.ndarray:
+    q = np.zeros(system.unknowns)
+    for nid, k in system.index.items():
+        if nid in frame.positions:
+            q[2 * k], q[2 * k + 1] = frame.positions[nid]
+    return q
+
+
 def check_mechanism(model: Model) -> Tuple[bool, str, int]:
     """(runnable, message, mobility). Never raises."""
     if not model.members:
@@ -702,6 +923,10 @@ def simulate(
             t=t, positions=positions, velocities=velocities, residual=float(residual), ok=True
         )
         frame.effort = _driver_effort(model, system, q, v, t)
+        reactions, axial, _effort_check, force_residual = _frame_forces(model, system, q)
+        frame.reactions = reactions
+        frame.axial = axial
+        frame.equilibrium_error = force_residual
         frames.append(frame)
 
     result.frames = frames
@@ -718,6 +943,27 @@ def simulate(
     if not frames:
         result.message = "Nothing to run."
         return result
+
+    if any(m.mass > 0 for m in model.members.values()):
+        # Only worth the extra pass when something actually has mass:
+        # acceleration by finite difference of the velocities already
+        # solved, then re-solve with the inertial force folded into the
+        # same generalized load every other force already goes through.
+        # This is what replaces frame.effort's quasi-static answer with one
+        # that accounts for a fast-moving link's own inertia, verified
+        # against the work-energy theorem before being trusted here.
+        accels = _frame_accelerations(frames, result.period)
+        for frame, accel in zip(frames, accels):
+            if not frame.ok or not accel:
+                continue
+            q_frame = _q_from_frame(system, frame)
+            extra = _inertial_load(model, system, accel)
+            reactions, axial, effort, force_residual = _frame_forces(
+                model, system, q_frame, extra_load=extra)
+            frame.reactions = reactions
+            frame.axial = axial
+            frame.effort = effort
+            frame.equilibrium_error = force_residual
 
     result.ok = True
     result.message = f"{len(frames)} frames over {duration:g} s." if mobility == 0 else message

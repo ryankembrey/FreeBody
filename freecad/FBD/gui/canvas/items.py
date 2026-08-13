@@ -316,7 +316,7 @@ class MemberItem(_Item):
 
         # Internal forces clutter the page, so only annotate the selected
         # member; the full set always lives in the results table.
-        res = self.canvas.result
+        res = self.canvas.display_result
         if not (res and self.isSelected() and self.ident in res.members):
             return
         forces = res.members[self.ident]
@@ -399,7 +399,20 @@ class MemberItem(_Item):
             decimals=4,
             suffix="N/mm",
         )
-        form.add_note("Only changes the answer for a statically indeterminate structure.")
+        form.add_spin(
+            "Mass",
+            member.mass,
+            lambda v: self.canvas.edit(lambda: setattr(member, "mass", v)),
+            lo=0.0,
+            decimals=3,
+            suffix="kg",
+            tooltip="Only used by Run Motion: a fast-moving link's own "
+                    "inertia adds to the force its driver needs.",
+        )
+        form.add_note(
+            "EA, EI and self weight only change the answer for a statically "
+            "indeterminate structure. Mass only matters in Run Motion."
+        )
         self.canvas.open_popup(scene_pos, form)
 
 
@@ -708,16 +721,41 @@ class PointLoadItem(_Item):
         r = self.LEN + 24
         return QtCore.QRectF(-r, -r, 2 * r, 2 * r)
 
+    def _components(self):
+        """Each axis with something to show, as (ux, uy, length, signed
+        value): ux/uy point in the arrow's own direction, length already
+        scaled so neither component can exceed what the combined arrow
+        would have been."""
+        l = self.load()
+        if not l:
+            return []
+        mag = l.magnitude()
+        if mag < 1e-9:
+            return []
+        out = []
+        if abs(l.fx) > 1e-9:
+            ux = 1.0 if l.fx > 0 else -1.0
+            out.append((ux, 0.0, self.LEN * abs(l.fx) / mag, l.fx))
+        if abs(l.fy) > 1e-9:
+            uy = -1.0 if l.fy > 0 else 1.0   # screen y is flipped from model y
+            out.append((0.0, uy, self.LEN * abs(l.fy) / mag, l.fy))
+        return out
+
     def shape(self):
-        d = self._dir()
         p = QtGui.QPainterPath()
+        stroker = QtGui.QPainterPathStroker()
+        stroker.setWidth(9.0)
+        if getattr(self.canvas, "show_components", False):
+            for ux, uy, length, _v in self._components():
+                p.moveTo(QtCore.QPointF(-ux * length, -uy * length))
+                p.lineTo(QtCore.QPointF(0, 0))
+            return stroker.createStroke(p)
+        d = self._dir()
         if not d:
             return p
         ux, uy, _ = d
         p.moveTo(QtCore.QPointF(-ux * self.LEN, -uy * self.LEN))
         p.lineTo(QtCore.QPointF(0, 0))
-        stroker = QtGui.QPainterPathStroker()
-        stroker.setWidth(9.0)
         stroke = stroker.createStroke(p)
         # Include the handle so the whole rotate control is clickable, not
         # just the thin shaft.
@@ -729,6 +767,9 @@ class PointLoadItem(_Item):
         return stroke
 
     def paint(self, painter, option, widget=None):
+        if getattr(self.canvas, "show_components", False):
+            self._paint_components(painter)
+            return
         d = self._dir()
         if not d:
             return
@@ -758,6 +799,33 @@ class PointLoadItem(_Item):
             painter.drawText(
                 QtCore.QPointF(tail.x() - width / 2 - ux * 6, tail.y() - uy * 6 - 5), text
             )
+
+    def _paint_components(self, painter):
+        """Fx and Fy as two separate, axis-aligned arrows: what actually
+        acts on the structure in each direction, without the angle of the
+        combined vector distracting from the two numbers that matter for a
+        by-hand check."""
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        col = self.ink(S.APPLIED)
+        for ux, uy, length, value in self._components():
+            tail = QtCore.QPointF(-ux * length, -uy * length)
+            tip = QtCore.QPointF(0.0, 0.0)
+            painter.setPen(QtGui.QPen(col, 1.7))
+            painter.drawLine(tail, QtCore.QPointF(-ux * self.HEAD, -uy * self.HEAD))
+            path = QtGui.QPainterPath()
+            _arrow_head(path, tip, ux, uy, self.HEAD)
+            painter.setBrush(col)
+            painter.setPen(QtCore.Qt.PenStyle.NoPen)
+            painter.drawPath(path)
+            if self.canvas.label_loads:
+                axis = "Fx" if uy == 0.0 else "Fy"
+                text = f"{axis} {fmt(value, chr(78))}"
+                painter.setFont(S.font(13.0))
+                painter.setPen(QtGui.QPen(col))
+                width = QtGui.QFontMetricsF(S.font(13.0)).horizontalAdvance(text)
+                painter.drawText(
+                    QtCore.QPointF(tail.x() - width / 2 - ux * 6, tail.y() - uy * 6 - 5), text
+                )
 
     # ---- drag-to-rotate ----------------------------------------------
 
@@ -1097,17 +1165,33 @@ class ResultOverlay(QtWidgets.QGraphicsItem):
     def boundingRect(self):
         return _overlay_bounds(self.canvas)
 
+    def _reaction_arrow(self, painter, c, tip, k):
+        head = self.HEAD * k
+        dx, dy = tip.x() - c.x(), tip.y() - c.y()
+        length = math.hypot(dx, dy)
+        if length < 1e-9:
+            return
+        ux, uy = dx / length, dy / length
+        pen = QtGui.QPen(S.REACTION, 1.8)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+        painter.drawLine(c, QtCore.QPointF(tip.x() - ux * head, tip.y() - uy * head))
+        path = QtGui.QPainterPath()
+        _arrow_head(path, tip, ux, uy, head)
+        painter.setBrush(S.REACTION)
+        painter.setPen(QtCore.Qt.PenStyle.NoPen)
+        painter.drawPath(path)
+
     def paint(self, painter, option, widget=None):
-        res = self.canvas.result
+        res = self.canvas.display_result
         if not res or not res.ok or not self.canvas.show_reactions:
             return
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
         model = self.canvas.model
         k = self.canvas.px(1.0)
         arrow = self.ARROW * k
-        head = self.HEAD * k
-        pen = QtGui.QPen(S.REACTION, 1.8)
-        pen.setCosmetic(True)
+        components = getattr(self.canvas, "show_components", False)
 
         for node_id, reaction in res.reactions.items():
             xy = model.entity_xy(node_id)
@@ -1115,17 +1199,25 @@ class ResultOverlay(QtWidgets.QGraphicsItem):
                 continue
             c = to_scene(xy[0], xy[1], self.sc())
             mag = reaction.magnitude()
-            if mag > 1e-6:
+            if mag > 1e-6 and components:
+                for value, ux, uy in ((reaction.fx, 1.0, 0.0), (reaction.fy, 0.0, -1.0)):
+                    if abs(value) < 1e-6:
+                        continue
+                    sx, sy = (ux, uy) if value > 0 else (-ux, -uy)
+                    length = arrow * abs(value) / mag
+                    tip = QtCore.QPointF(c.x() + sx * length, c.y() + sy * length)
+                    self._reaction_arrow(painter, c, tip, k)
+                    if self.canvas.label_reactions:
+                        axis = "Fx" if uy == 0.0 else "Fy"
+                        px_text(
+                            painter, self.canvas,
+                            QtCore.QPointF(tip.x() + sx * 6 * k, tip.y() + sy * 6 * k),
+                            f"{axis} {fmt(value, 'N')}", S.REACTION, 13.0, dy=-4.0,
+                        )
+            elif mag > 1e-6:
                 ux, uy = reaction.fx / mag, -reaction.fy / mag
                 tip = QtCore.QPointF(c.x() + ux * arrow, c.y() + uy * arrow)
-                painter.setPen(pen)
-                painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
-                painter.drawLine(c, QtCore.QPointF(tip.x() - ux * head, tip.y() - uy * head))
-                path = QtGui.QPainterPath()
-                _arrow_head(path, tip, ux, uy, head)
-                painter.setBrush(S.REACTION)
-                painter.setPen(QtCore.Qt.PenStyle.NoPen)
-                painter.drawPath(path)
+                self._reaction_arrow(painter, c, tip, k)
                 if self.canvas.label_reactions:
                     px_text(
                         painter,
@@ -1267,7 +1359,7 @@ class ProjectionLinesOverlay(QtWidgets.QGraphicsItem):
 
     def paint(self, painter, option, widget=None):
         is_overlay = getattr(self.canvas, "diagrams_overlay", False)
-        res = getattr(self.canvas, "result", None)
+        res = getattr(self.canvas, "display_result", None)
         active_kinds = [
             k for k in ("axial", "shear", "moment") if getattr(self.canvas, f"show_{k}", False)
         ]
@@ -1396,7 +1488,7 @@ class SingleDiagramOverlay(QtWidgets.QGraphicsItem):
     def boundingRect(self):
         if not getattr(self.canvas, f"show_{self.kind}", False):
             return QtCore.QRectF()
-        res = getattr(self.canvas, "result", None)
+        res = getattr(self.canvas, "display_result", None)
         if not res or not res.ok:
             return QtCore.QRectF()
         model = self.canvas.model
@@ -1450,7 +1542,7 @@ class SingleDiagramOverlay(QtWidgets.QGraphicsItem):
     def paint(self, painter, option, widget=None):
         if not getattr(self.canvas, f"show_{self.kind}", False):
             return
-        res = getattr(self.canvas, "result", None)
+        res = getattr(self.canvas, "display_result", None)
         if not res or not res.ok:
             return
 

@@ -167,6 +167,9 @@ class DisplayHUD(QtWidgets.QFrame):
         self.btn_lbl = make_btn("Labels", "Toggle Joint Labels", editor.toggle_labels)
         self.btn_rxn = make_btn("Reactions", "Toggle Reactions", editor.toggle_reactions)
         self.btn_tbl = make_btn("Table", "Toggle Results Table", editor.toggle_results_table)
+        self.btn_comp = make_btn(
+            "Components", "Show forces as separate X and Y arrows",
+            editor.toggle_components)
 
         sep1 = QtWidgets.QFrame()
         sep1.setObjectName("separator")
@@ -186,15 +189,22 @@ class DisplayHUD(QtWidgets.QFrame):
         self.btn_sheet = make_btn("Sheet", "Toggle Paper Sheet Boundary", editor.toggle_sheet)
 
     def sync_state(self):
-        has_res = self.editor.result is not None and getattr(self.editor.result, "ok", False)
+        # A motion frame carries axial force, which the whole toolbar can
+        # already show; it never carries shear or bending, since a
+        # mechanism member is a rigid pin-jointed link rather than an
+        # elastic beam, so those two stay tied to a real static solve.
+        display = getattr(self.editor, "display_result", self.editor.result)
+        has_res = display is not None and getattr(display, "ok", False)
+        has_bending = self.editor.result is not None and getattr(self.editor.result, "ok", False)
 
         buttons_state = [
             (self.btn_lbl, self.editor.show_labels, True),
             (self.btn_rxn, self.editor.show_reactions, has_res),
             (self.btn_tbl, getattr(self.editor, "show_results_table", True), has_res),
+            (self.btn_comp, getattr(self.editor, "show_components", False), True),
             (self.btn_ax, self.editor.show_axial, has_res),
-            (self.btn_sh, self.editor.show_shear, has_res),
-            (self.btn_mo, self.editor.show_moment, has_res),
+            (self.btn_sh, self.editor.show_shear, has_bending),
+            (self.btn_mo, self.editor.show_moment, has_bending),
             (
                 self.btn_ov,
                 self.editor.diagrams_overlay,
@@ -253,6 +263,7 @@ class Editor(QtWidgets.QWidget, MotionController):
         self.diagram_activation_order = []
         self.results_table_pos = None
         self.results_table_scale = 1.0
+        self.show_components = False   # forces as separate X/Y arrows, not one angled arrow
         self.observers = []  # callables notified when anything changes
         self.snap_enabled = True
         self.default_force = 1000.0  # N
@@ -1077,8 +1088,8 @@ class Editor(QtWidgets.QWidget, MotionController):
 
     def _biggest_force(self):
         values = [p.magnitude() for p in self.model.point_loads.values()]
-        if self.result and self.result.ok:
-            values += [r.magnitude() for r in self.result.reactions.values()]
+        if self.display_result and self.display_result.ok:
+            values += [r.magnitude() for r in self.display_result.reactions.values()]
         return max(values) if values else 0.0
 
     # ------------------------------------------------------------ edits
@@ -1354,6 +1365,10 @@ class Editor(QtWidgets.QWidget, MotionController):
         self.show_sheet = not getattr(self, "show_sheet", True)
         self.refresh_geometry()
 
+    def toggle_components(self):
+        self.show_components = not self.show_components
+        self.refresh_geometry()
+
     def toggle_labels(self):
         self.show_labels = not self.show_labels
         self.refresh_geometry()
@@ -1506,7 +1521,7 @@ class Editor(QtWidgets.QWidget, MotionController):
     def result_rows(self):
         """Result table contents, as (item, value, note) tuples."""
         rows = []
-        res = self.result
+        res = self.display_result
         if not (res and res.ok):
             return rows
         for nid, reaction in sorted(res.reactions.items()):

@@ -28,6 +28,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from . import style as S
 from .canvas import popup as P
 from .canvas.items import _Item, _arrow_head, _hatch, px_text, fmt, to_scene
+from ..engine.results import StaticResult, Reaction, MemberForces
 from .canvas.tools import Tool
 from .engine_bridge import edit
 from ..engine import model as M
@@ -881,6 +882,29 @@ class ActuatorTool(_DriverTool):
         return True
 
 
+def _static_result_from_frame(model, frame):
+    """A motion frame, reshaped to look like a static solve, so the whole
+    existing results toolbar -- reaction arrows, the table, the axial
+    annotation on a selected member -- can read it without knowing whether
+    it came from Solve or from the middle of a running mechanism.
+
+    A rigid pin-jointed link only ever carries a uniform axial force, so
+    two identical samples stand in for "constant along its length": enough
+    for the existing diagram code to draw a flat band rather than a wedge
+    tapering to nothing at one end, without claiming a shape it doesn't
+    have. There is deliberately nothing here for shear or moment -- a
+    moving mechanism is not an elastic beam, and showing a false zero would
+    be worse than showing nothing.
+    """
+    result = StaticResult(ok=True, message="From the current instant of the motion run.")
+    for ident, (fx, fy) in frame.reactions.items():
+        result.reactions[ident] = Reaction(node=ident, fx=fx, fy=fy, m=0.0)
+    for member_id, value in frame.axial.items():
+        result.members[member_id] = MemberForces(member=member_id, axial=[value, value])
+    result.equilibrium_error = frame.equilibrium_error
+    return result
+
+
 def motion_tools(canvas):
     """The mechanism half of the palette, appended by tools.build_tools."""
     return [MotorTool(canvas), ActuatorTool(canvas)]
@@ -950,6 +974,12 @@ class MotionBar(QtWidgets.QFrame):
         self.btn_trace.clicked.connect(editor.toggle_trace)
         layout.addWidget(self.btn_trace)
 
+        self.btn_static = QtWidgets.QPushButton("Statics")
+        self.btn_static.setToolTip(
+            "Show the static solve on the toolbar again, without clearing this run.")
+        self.btn_static.clicked.connect(lambda: editor.set_display_mode("static"))
+        layout.addWidget(self.btn_static)
+
         self.btn_graph = QtWidgets.QPushButton("Graph")
         self.btn_graph.setCheckable(True)
         self.btn_graph.setToolTip("Effort against travel, for every driver at once")
@@ -981,6 +1011,7 @@ class MotionBar(QtWidgets.QFrame):
         self.btn_trace.setEnabled(has)
         self.btn_graph.setEnabled(has)
         self.btn_clear.setEnabled(has)
+        self.btn_static.setEnabled(has and editor._display_mode == "motion")
         for button, checked in (
             (self.btn_play, editor.playing),
             (self.btn_trace, editor.model.motion.trace),
@@ -1017,6 +1048,7 @@ class MotionController:
         self.show_motion = True
         self.label_motion = True
         self.default_lever_length = 200.0
+        self._display_mode = "static"   # "static" or "motion": which result the toolbar shows
         self._motion_timer = QtCore.QTimer(self)
         self._motion_timer.setInterval(33)
         self._motion_timer.timeout.connect(self._advance)
@@ -1033,6 +1065,17 @@ class MotionController:
         self.motion_graph = EffortGraphOverlay(self)
         self.scene.addItem(self.motion_graph)
 
+    @property
+    def display_result(self):
+        """Whichever result the static-results toolbar should show right
+        now: the live motion frame while a run is the more recent thing the
+        user did, the ordinary static solve otherwise."""
+        if (self._display_mode == "motion" and self.motion_result
+                and self.motion_result.ok and self.motion_result.frames):
+            return _static_result_from_frame(
+                self.model, self.motion_result.frame_at(self.motion_time))
+        return self.result
+
     def run_motion(self):
         self.playing = False
         self._motion_timer.stop()
@@ -1046,6 +1089,12 @@ class MotionController:
         if self.motion_result.ok:
             self.playing = True
             self._motion_timer.start()
+            self._display_mode = "motion"
+            # Neither applies to a moving mechanism: a rigid pin-jointed
+            # link carries no bending at all, so leaving a stale toggle on
+            # would draw a diagram this result has nothing to say about.
+            self.show_shear = False
+            self.show_moment = False
         self.refresh_motion_items()
         self.set_prompt(self.motion_result.message)
         for warning in self.motion_result.warnings:
@@ -1065,6 +1114,10 @@ class MotionController:
                 item.update()
             except RuntimeError:
                 pass
+
+    def set_display_mode(self, mode):
+        self._display_mode = mode
+        self.refresh_geometry()
 
     def toggle_play(self):
         if not (self.motion_result and self.motion_result.ok):
@@ -1096,6 +1149,8 @@ class MotionController:
             self.motion_curves = []
             self.playing = False
             self._motion_timer.stop()
+            if self._display_mode == "motion":
+                self._display_mode = "static"
 
     def clear_motion(self):
         """Take the run off the page without touching the diagram.
@@ -1107,6 +1162,7 @@ class MotionController:
         """
         self.invalidate_motion()
         self.motion_time = 0.0
+        self._display_mode = "static"
         self.refresh_motion_items()
         self.refresh_geometry()
         self.notify()
@@ -1165,6 +1221,23 @@ class MotionController:
                         ("peak push" if value > 0 else "peak pull"),
                     )
                 )
+        peak_reactions = {}
+        for f in result.frames:
+            if not f.ok:
+                continue
+            for ident, (fx, fy) in f.reactions.items():
+                mag = math.hypot(fx, fy)
+                if mag > peak_reactions.get(ident, 0.0):
+                    peak_reactions[ident] = mag
+        for support in self.model.supports.values():
+            mag = peak_reactions.get(support.holds)
+            if mag and mag > 1e-6:
+                rows.append((
+                    f"Reaction {self.model.entity_label(support.holds)}",
+                    fmt(mag, "N"),
+                    "peak over the run",
+                ))
+
         speed = result.peak_speed()
         if speed > 1e-9:
             rows.append(("Peak joint speed", fmt(speed, "mm/s"), "any joint"))

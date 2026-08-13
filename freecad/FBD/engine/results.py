@@ -93,12 +93,47 @@ class StaticResult:
 
 
 @dataclass
+class MemberEnvelope:
+    """The extreme of each internal-force quantity across every combination
+    solved, sample point by sample point along the member, plus which
+    combination produced the single worst value of each."""
+    member: int
+    axial_max: List[float] = field(default_factory=list)
+    axial_min: List[float] = field(default_factory=list)
+    shear_max: List[float] = field(default_factory=list)
+    shear_min: List[float] = field(default_factory=list)
+    moment_max: List[float] = field(default_factory=list)
+    moment_min: List[float] = field(default_factory=list)
+    governing: Dict[str, int] = field(default_factory=dict)   # "axial" -> combo id
+
+    def peak(self, quantity: str) -> float:
+        hi = getattr(self, f"{quantity}_max", [])
+        lo = getattr(self, f"{quantity}_min", [])
+        candidates = [v for v in (max(hi, default=0.0), min(lo, default=0.0))]
+        return max(candidates, key=abs) if candidates else 0.0
+
+
+@dataclass
+class EnvelopeResult:
+    ok: bool = False
+    message: str = ""
+    results: Dict[int, "StaticResult"] = field(default_factory=dict)     # combo id -> result
+    members: Dict[int, MemberEnvelope] = field(default_factory=dict)
+    reactions_max: Dict[int, "Reaction"] = field(default_factory=dict)   # per-component bounds,
+    reactions_min: Dict[int, "Reaction"] = field(default_factory=dict)   # not one real reaction
+    reaction_governing: Dict[str, int] = field(default_factory=dict)     # "3_fy_max" -> combo id
+
+
+@dataclass
 class Frame:
     """One instant of a mechanism's motion."""
     t: float = 0.0
     positions: Dict[int, Tuple[float, float]] = field(default_factory=dict)
     velocities: Dict[int, Tuple[float, float]] = field(default_factory=dict)
     effort: Dict[int, float] = field(default_factory=dict)   # driver id -> torque or force
+    reactions: Dict[int, Tuple[float, float]] = field(default_factory=dict)  # support/pivot id -> fx, fy
+    axial: Dict[int, float] = field(default_factory=dict)    # member id -> N, tension positive
+    equilibrium_error: float = 0.0   # relative residual of the force solve, near-zero means trustworthy
     residual: float = 0.0
     ok: bool = True
 

@@ -83,6 +83,9 @@ BEHAVIOUR_LABELS = {
 }
 
 # Driver motion profiles.
+DEAD_CASE = 0   # every load and every model starts here; nothing changes
+                # behaviour until a second case is actually created
+
 CONTINUOUS = "continuous"  # motor spins on forever at its set speed
 SWEEP = "sweep"  # motor rocks back and forth across its sweep angle
 EXTEND = "extend"  # actuator runs out once and holds
@@ -132,8 +135,10 @@ class Member:
     EI: float = DEFAULT_EI
     label: str = ""
 
-    # Non-linear and release behaviour. All of these are ignored by the
-    # kinematics module, which reads every member as a rigid link.
+    # Non-linear and release behaviour, plus mass. Everything here except
+    # mass is ignored by the kinematics module, which reads every member as
+    # a rigid link; mass is what lets it also account for inertia while the
+    # mechanism actually moves, rather than solving it as if frozen.
     release_start: bool = False  # moment released at the start joint (a hinge)
     release_end: bool = False
     k_start: float = 0.0  # rotational spring at the start, N.mm/rad
@@ -142,6 +147,7 @@ class Member:
     mp_end: float = 0.0
     behaviour: str = BOTH
     g: float = 0.0  # self weight, N/mm, applied downward
+    mass: float = 0.0  # kg, this member's total mass, for inertia while it moves
 
     # Provenance, as for Node.
     source_geo: int = -1
@@ -236,6 +242,7 @@ class PointLoad:
     fx: float = 0.0
     fy: float = 0.0
     label: str = ""
+    case: int = DEAD_CASE
 
     def magnitude(self) -> float:
         return math.hypot(self.fx, self.fy)
@@ -248,6 +255,7 @@ class MomentLoad:
     anchor: Optional[int] = None
     m: float = 0.0  # counter-clockwise positive, N.mm
     label: str = ""
+    case: int = DEAD_CASE
 
 
 @dataclass
@@ -264,6 +272,7 @@ class LineLoad:
     q: float = 0.0
     direction: str = "y"
     label: str = ""
+    case: int = DEAD_CASE
 
 
 @dataclass
@@ -298,6 +307,28 @@ class Actuator:
     speed: float = 50.0  # mm/s
     motion: str = CYCLE  # EXTEND, CYCLE or SINE
     label: str = ""
+
+
+@dataclass
+class LoadCase:
+    """A named set of loads: Dead, Live, Wind, Seismic, and so on.
+
+    Case 0 always exists implicitly, whether or not the user has ever
+    created another one, so a diagram with no cases in play behaves exactly
+    as it always did: every load belongs to it, and self_weight defaults to
+    True there so member.g keeps doing what it has always done.
+    """
+    id: int
+    name: str = "Dead"
+    self_weight: bool = False   # true: every member's own weight counts here
+
+
+@dataclass
+class Combination:
+    """1.2 Dead + 1.6 Live, and so on: a factor per case."""
+    id: int
+    name: str = ""
+    factors: Dict[int, float] = field(default_factory=dict)   # case id -> factor
 
 
 @dataclass
@@ -374,7 +405,16 @@ class Model:
     motion: Motion = field(default_factory=Motion)
     analysis: Analysis = field(default_factory=Analysis)
     sketch_link: Optional[SketchLink] = None
+    load_cases: Dict[int, LoadCase] = field(default_factory=dict)
+    combinations: Dict[int, Combination] = field(default_factory=dict)
     _next_id: int = 1
+
+    def __post_init__(self):
+        # Case 0 is not created through new_id(): it exists for every model,
+        # the same way a diagram always has a sheet, so an old document with
+        # no notion of cases still resolves every load to somewhere real.
+        if DEAD_CASE not in self.load_cases:
+            self.load_cases[DEAD_CASE] = LoadCase(DEAD_CASE, "Dead", self_weight=True)
 
     # === ids
 
@@ -500,6 +540,54 @@ class Model:
             "member": bar.id,
             "advantage": (a_len / b_len) if b_len > 1e-9 else float("inf"),
         }
+
+    def add_load_case(self, name: str, self_weight: bool = False) -> LoadCase:
+        case = LoadCase(self.new_id(), name, self_weight)
+        self.load_cases[case.id] = case
+        return case
+
+    def add_combination(self, name: str, factors: Optional[Dict[int, float]] = None) -> Combination:
+        combo = Combination(self.new_id(), name, dict(factors or {}))
+        self.combinations[combo.id] = combo
+        return combo
+
+    def for_combination(self, combo: "Combination") -> "Model":
+        """A copy of this model with just this combination's loads, scaled
+        and merged, ready to hand to the ordinary solver.
+
+        Solved as its own load case rather than superposed from cached
+        results: superposition would be wrong the moment a member can go
+        slack or a hinge can form, since that depends on which loads are
+        actually present together, not on scaling an answer after the fact.
+        """
+        out = self.copy()
+        weight_factor = 0.0
+        for case_id, factor in combo.factors.items():
+            case = self.load_cases.get(case_id)
+            if case and case.self_weight:
+                weight_factor += factor
+        for pid, p in list(out.point_loads.items()):
+            factor = combo.factors.get(p.case)
+            if factor is None:
+                del out.point_loads[pid]
+            else:
+                p.fx *= factor
+                p.fy *= factor
+        for mid, m in list(out.moment_loads.items()):
+            factor = combo.factors.get(m.case)
+            if factor is None:
+                del out.moment_loads[mid]
+            else:
+                m.m *= factor
+        for lid, l in list(out.line_loads.items()):
+            factor = combo.factors.get(l.case)
+            if factor is None:
+                del out.line_loads[lid]
+            else:
+                l.q *= factor
+        for member in out.members.values():
+            member.g *= weight_factor
+        return out
 
     def add_pivot(self, member: int, t: float = 0.5) -> dict:
         """Turn a point on an existing member into a pivot, in one step.
@@ -712,6 +800,8 @@ class Model:
             "motion": asdict(self.motion),
             "analysis": asdict(self.analysis),
             "sketch_link": asdict(self.sketch_link) if self.sketch_link else None,
+            "load_cases": [asdict(c) for c in self.load_cases.values()],
+            "combinations": [asdict(c) for c in self.combinations.values()],
             "nodes": [asdict(n) for n in self.nodes.values()],
             "members": [asdict(m) for m in self.members.values()],
             "supports": [asdict(s) for s in self.supports.values()],
@@ -734,6 +824,14 @@ class Model:
         m.analysis = _make(Analysis, data.get("analysis") or {})
         link = data.get("sketch_link")
         m.sketch_link = _make(SketchLink, link) if link else None
+        for d in data.get("load_cases", []):
+            m.load_cases[d["id"]] = _make(LoadCase, d)
+        for d in data.get("combinations", []):
+            combo = _make(Combination, d)
+            combo.factors = {int(k): v for k, v in (d.get("factors") or {}).items()}
+            m.combinations[d["id"]] = combo
+        if DEAD_CASE not in m.load_cases:
+            m.load_cases[DEAD_CASE] = LoadCase(DEAD_CASE, "Dead", self_weight=True)
         for d in data.get("nodes", []):
             m.nodes[d["id"]] = _make(Node, d)
         for d in data.get("members", []):
@@ -755,6 +853,8 @@ class Model:
         # Repair a corrupted counter rather than handing out duplicate ids.
         used = (
             [n for n in m.nodes]
+            + [i for i in m.load_cases if i != DEAD_CASE]
+            + [i for i in m.combinations]
             + [i for i in m.members]
             + [i for i in m.supports]
             + [i for i in m.anchors]
