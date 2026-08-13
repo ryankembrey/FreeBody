@@ -89,11 +89,18 @@ def px_text(
     centre=True,
     dx=0.0,
     dy=0.0,
+    angle=0.0,
 ):
-    """Draw text at a scene point, at constant screen size."""
+    """Draw text at a scene point, at constant screen size.
+
+    angle rotates it about that point, in degrees, for a label meant to
+    read along a member's own direction rather than sit flat on the page.
+    """
     k = canvas.px(1.0)
     painter.save()
     painter.translate(at)
+    if angle:
+        painter.rotate(angle)
     painter.scale(k, k)
     f = S.font(size_pt, bold)
     painter.setFont(f)

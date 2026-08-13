@@ -269,30 +269,45 @@ class ActuatorItem(_Item):
 
         if self.canvas.label_loads:
             ac = self.actuator()
-            mid = QtCore.QPointF((a.x() + b.x()) / 2.0, (a.y() + b.y()) / 2.0)
             text, colour = self._label(ac)
-            px_text(
-                painter,
-                self.canvas,
-                QtCore.QPointF(
-                    mid.x() + nx * self.canvas.px(12.0), mid.y() + ny * self.canvas.px(12.0)
-                ),
-                text,
-                colour,
-                12.0,
-            )
+            if text:
+                mid = QtCore.QPointF((a.x() + b.x()) / 2.0, (a.y() + b.y()) / 2.0)
+                # Read along the ram, not flat: flip 180 degrees whenever
+                # that would otherwise draw it upside down, so it always
+                # stays within +/-90 degrees of upright.
+                angle_deg = math.degrees(math.atan2(uy, ux))
+                if angle_deg > 90.0:
+                    angle_deg -= 180.0
+                elif angle_deg < -90.0:
+                    angle_deg += 180.0
+                # Parallel text alongside a parallel line reads as touching
+                # at a gap that looked fine crossing it at an angle, so this
+                # sits noticeably further off than the un-rotated labels do.
+                px_text(
+                    painter,
+                    self.canvas,
+                    QtCore.QPointF(
+                        mid.x() + nx * self.canvas.px(24.0), mid.y() + ny * self.canvas.px(24.0)
+                    ),
+                    text,
+                    colour,
+                    12.0,
+                    angle=angle_deg,
+                )
 
     def _label(self, ac):
-        """Stroke and speed until it has been run, force once it has.
-
-        Sizing a ram is a force question, so the moment there is an answer the
-        force takes the label and the travel moves to the popup. It is the
-        force at the frame on screen, not the peak, so scrubbing through the
+        """Nothing on the canvas until a motion has run, then the push or
+        pull force, read at the frame on screen so scrubbing through the
         stroke shows where the demand actually is.
+
+        Stroke and speed already live in the popup double-click brings up.
+        Showing them on the page as well just adds clutter, and with two
+        actuators anywhere near each other their labels reliably overlap
+        into something unreadable -- worse than showing nothing.
         """
         result = getattr(self.canvas, "motion_result", None)
         if not (result and result.ok and result.frames):
-            return f"{ac.stroke:g} mm at {abs(ac.speed):g} mm/s", self.ink(DRIVER)
+            return None, None
         frame = result.frame_at(getattr(self.canvas, "motion_time", 0.0))
         force = frame.effort.get(ac.id)
         if force is None:
