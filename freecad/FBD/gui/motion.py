@@ -161,6 +161,22 @@ class MotorItem(_Item):
                 suffix="deg",
                 tooltip="Either side of the starting angle.",
             )
+        form.add_spin(
+            "Starts at",
+            mo.schedule.start,
+            lambda v: self.canvas.edit(lambda: setattr(mo.schedule, "start", max(0.0, v))),
+            lo=0.0, decimals=2, suffix="s",
+            tooltip="Seconds into the run before this motor starts turning.",
+        )
+        form.add_spin(
+            "Runs for",
+            mo.schedule.duration if mo.schedule.duration is not None else 0.0,
+            lambda v: self.canvas.edit(
+                lambda: setattr(mo.schedule, "duration", v if v > 0 else None)),
+            lo=0.0, decimals=2, suffix="s",
+            tooltip="How long it runs once started. 0 means it keeps running "
+                    "for the rest of the animation.",
+        )
         member = self.model.members.get(mo.member)
         if member:
             form.add_readonly("Drives", member.label)
@@ -321,6 +337,22 @@ class ActuatorItem(_Item):
             ],
             ac.motion,
             lambda v: self.canvas.edit(lambda: setattr(ac, "motion", v)),
+        )
+        form.add_spin(
+            "Starts at",
+            ac.schedule.start,
+            lambda v: self.canvas.edit(lambda: setattr(ac.schedule, "start", max(0.0, v))),
+            lo=0.0, decimals=2, suffix="s",
+            tooltip="Seconds into the run before this ram starts moving.",
+        )
+        form.add_spin(
+            "Runs for",
+            ac.schedule.duration if ac.schedule.duration is not None else 0.0,
+            lambda v: self.canvas.edit(
+                lambda: setattr(ac.schedule, "duration", v if v > 0 else None)),
+            lo=0.0, decimals=2, suffix="s",
+            tooltip="How long it runs once started. 0 means it keeps running "
+                    "for the rest of the animation.",
         )
         member = self.model.members.get(ac.member)
         if member:
@@ -708,6 +740,343 @@ class EffortGraphOverlay(QtWidgets.QGraphicsItem):
         painter.restore()
 
 
+class ScheduleOverlay(QtWidgets.QGraphicsItem):
+    """A timeline for choreographing when each driver runs.
+
+    Every driver starts out as a full-width bar -- the default, always-on
+    behaviour -- so narrowing one into a turn is discovered by dragging,
+    not by hunting for a setting. Drag an edge to change when a turn starts
+    or how long it lasts; drag the middle of a bar to move the whole turn
+    without changing its length.
+    """
+
+    MIN_SCALE = 0.6
+    MAX_SCALE = 3.0
+    HANDLE = 12.0     # pixels: panel corner resize zone
+    EDGE = 7.0        # pixels: clip edge grab zone
+    ROW_H = 20.0
+    HEADER_H = 32.0   # two rows: title + Repeat, then the time axis
+    W = 300.0
+
+    def __init__(self, canvas):
+        super().__init__()
+        self.canvas = canvas
+        self.setZValue(59)
+        self.setFlag(QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
+        self.setFlag(QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+        self.setFlag(QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
+        self.setAcceptHoverEvents(True)
+        self.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
+        self._rect = QtCore.QRectF(0, 0, self.W, self.HEADER_H + self.ROW_H * 2)
+        self._drag_start = None
+        self._resizing = False
+        self._resize_start_screen = None
+        self._resize_start_scale = 1.0
+        self._clip_drag = None       # (driver, mode): mode in "move", "left", "right"
+        self._clip_drag_ref = None   # (start0, end0, scene_x0)
+        if getattr(canvas, "schedule_pos", None) is not None:
+            self.setPos(canvas.schedule_pos)
+        else:
+            sheet = canvas.scene.sheet_rect()
+            self.setPos(sheet.right() - self.W - 20, sheet.top() + 15)
+
+    @property
+    def panel_scale(self):
+        return max(self.MIN_SCALE, min(self.MAX_SCALE, getattr(self.canvas, "schedule_scale", 1.0)))
+
+    def _drivers(self):
+        out = [("motor", mo) for mo in self.canvas.model.motors.values()]
+        out += [("actuator", ac) for ac in self.canvas.model.actuators.values()]
+        return out
+
+    def _span(self):
+        """The total sequence length implied by every driver's schedule,
+        right now -- not the last run's cached duration, which would go
+        stale the instant a clip is dragged. Only a driver with an explicit
+        end can push this further out; one still set to "runs to the end"
+        follows wherever that end lands rather than driving it, so a
+        window full of always-on drivers doesn't itself force the timeline
+        wider. Recomputed on every paint, so the axis and every clip's
+        pixel width track a drag live: the panel itself never resizes,
+        only how many seconds fit across it, which is what makes dragging
+        one clip out past the others visually squeeze everything to fit
+        rather than overflow the window.
+        """
+        base = max(0.5, self.canvas.model.motion.duration)
+        span = base
+        for _kind, driver in self._drivers():
+            sc = getattr(driver, "schedule", None)
+            if sc and sc.scheduled and sc.duration is not None:
+                span = max(span, sc.start + sc.duration)
+        return span
+
+    def boundingRect(self):
+        return self._rect
+
+    def _visible(self):
+        return getattr(self.canvas, "show_schedule", False) and bool(self._drivers())
+
+    def sync(self):
+        self.setVisible(self._visible())
+
+    def _layout(self, k):
+        drivers = self._drivers()
+        w = self.W * k
+        h = (self.HEADER_H + self.ROW_H * max(1, len(drivers))) * k
+        label_w = 64.0 * k
+        plot = QtCore.QRectF(label_w, self.HEADER_H * k, w - label_w - 8.0 * k,
+                             h - self.HEADER_H * k - 6.0 * k)
+        rows = []
+        for i, (kind, driver) in enumerate(drivers):
+            top = plot.top() + i * (self.ROW_H * k)
+            rows.append((kind, driver, QtCore.QRectF(plot.left(), top, plot.width(), self.ROW_H * k)))
+        return w, h, label_w, plot, rows
+
+    def _clip_span(self, driver, span):
+        start = driver.schedule.start
+        end = start + (driver.schedule.duration if driver.schedule.duration is not None
+                       else max(0.0, span - start))
+        return start, end
+
+    def _clip_rect(self, row_rect, plot, span, driver, k):
+        start, end = self._clip_span(driver, span)
+        if span > 1e-9:
+            x0 = plot.left() + (start / span) * plot.width()
+            x1 = plot.left() + (end / span) * plot.width()
+        else:
+            x0, x1 = plot.left(), plot.right()
+        pad = 3.0 * k
+        return QtCore.QRectF(x0, row_rect.top() + pad, max(2.0, x1 - x0), row_rect.height() - 2 * pad)
+
+    def _repeat_geometry(self, w, k):
+        """(box_rect, label_pos, hit_rect) for the Repeat toggle, sharing
+        the title's own row rather than the time axis below it."""
+        font_small = QtGui.QFont("DejaVu Sans")
+        font_small.setPixelSize(max(6, round(8 * k)))
+        label = "Repeat"
+        label_w = QtGui.QFontMetricsF(font_small).horizontalAdvance(label)
+        box = 11.0 * k
+        margin = 6.0 * k
+        gap = 4.0 * k
+        y = 5.0 * k
+        box_x = w - margin - box
+        box_rect = QtCore.QRectF(box_x, y, box, box)
+        label_pos = QtCore.QPointF(box_x - gap - label_w, y + box - 2.0 * k)
+        hit_rect = QtCore.QRectF(box_x - gap - label_w - 2 * k, 0.0,
+                                 margin + box + gap + label_w + 2 * k, 18.0 * k)
+        return box_rect, label_pos, hit_rect
+
+    def _near_corner(self, pos):
+        r = self._rect
+        return (r.right() - pos.x()) <= self.HANDLE and (r.bottom() - pos.y()) <= self.HANDLE
+
+    def _hit_clip(self, pos):
+        k = self.panel_scale
+        _w, _h, _label_w, plot, rows = self._layout(k)
+        span = self._span()
+        for _kind, driver, row_rect in rows:
+            if not (row_rect.top() <= pos.y() <= row_rect.bottom()):
+                continue
+            clip = self._clip_rect(row_rect, plot, span, driver, k)
+            edge = self.EDGE * k
+            if abs(pos.x() - clip.left()) <= edge:
+                return driver, "left"
+            if abs(pos.x() - clip.right()) <= edge:
+                return driver, "right"
+            if clip.left() - edge <= pos.x() <= clip.right() + edge:
+                return driver, "move"
+        return None
+
+    def hoverMoveEvent(self, event):
+        pos = event.pos()
+        if self._near_corner(pos):
+            self.setCursor(QtCore.Qt.CursorShape.SizeFDiagCursor)
+        elif self._hit_clip(pos):
+            # Every clip interaction only ever moves time, never rows, so
+            # the cursor says so no matter which part of it is under the
+            # pointer -- edge or middle alike.
+            self.setCursor(QtCore.Qt.CursorShape.SizeHorCursor)
+        else:
+            self.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
+        super().hoverMoveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() != QtCore.Qt.MouseButton.LeftButton:
+            super().mousePressEvent(event)
+            return
+        pos = event.pos()
+        k = self.panel_scale
+        w, _h, _label_w, _plot, _rows = self._layout(k)
+        _box, _label_pos, repeat_hit = self._repeat_geometry(w, k)
+        if repeat_hit.contains(pos):
+            self.canvas.toggle_repeat()
+            self.update()
+            event.accept()
+            return
+        if self._near_corner(pos):
+            self._resizing = True
+            self._resize_start_screen = event.screenPos()
+            self._resize_start_scale = self.panel_scale
+            event.accept()
+            return
+        hit = self._hit_clip(pos)
+        if hit:
+            driver, mode = hit
+            start0, end0 = self._clip_span(driver, self._span())
+            self._clip_drag = (driver, mode)
+            self._clip_drag_ref = (start0, end0, event.scenePos().x())
+            self.canvas.push_undo("Adjust schedule")
+            event.accept()
+            return
+        self._drag_start = event.screenPos()
+        self._pos_start = self.pos()
+        self.setCursor(QtCore.Qt.CursorShape.ClosedHandCursor)
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._resizing:
+            delta = event.screenPos() - self._resize_start_screen
+            span_px = max(delta.x(), delta.y())
+            self.canvas.schedule_scale = max(self.MIN_SCALE, min(
+                self.MAX_SCALE, self._resize_start_scale * (1.0 + span_px / 140.0)))
+            self.prepareGeometryChange()
+            self.update()
+            event.accept()
+            return
+        if self._clip_drag:
+            driver, mode = self._clip_drag
+            start0, end0, scene_x0 = self._clip_drag_ref
+            k = self.panel_scale
+            _w, _h, _label_w, plot, _rows = self._layout(k)
+            span = self._span()
+            if plot.width() < 1 or span < 1e-9:
+                return
+            dt = (event.scenePos().x() - scene_x0) / plot.width() * span
+            if mode == "move":
+                length = end0 - start0
+                new_start = max(0.0, start0 + dt)
+                driver.schedule.start = new_start
+                driver.schedule.duration = length
+            elif mode == "left":
+                new_start = max(0.0, min(end0 - 0.02, start0 + dt))
+                driver.schedule.start = new_start
+                driver.schedule.duration = end0 - new_start
+            else:  # "right"
+                new_end = max(start0 + 0.02, end0 + dt)
+                driver.schedule.duration = new_end - start0
+            self.canvas.invalidate_motion()
+            self.canvas.refresh_geometry()
+            self.update()
+            event.accept()
+            return
+        if self._drag_start is not None:
+            delta = event.screenPos() - self._drag_start
+            scale = self.canvas.view.transform().m11() or 1.0
+            new_pos = QtCore.QPointF(self._pos_start.x() + delta.x() / scale,
+                                     self._pos_start.y() + delta.y() / scale)
+            self.setPos(new_pos)
+            self.canvas.schedule_pos = new_pos
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._resizing or self._clip_drag or self._drag_start is not None:
+            self._resizing = False
+            self._clip_drag = None
+            self._clip_drag_ref = None
+            self._drag_start = None
+            self.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
+            self.canvas.model_changed()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def paint(self, painter, option, widget=None):
+        if not self._visible():
+            return
+        k = self.panel_scale
+        w, h, label_w, plot, rows = self._layout(k)
+        self._rect = QtCore.QRectF(0, 0, w, h)
+        span = self._span()
+
+        painter.save()
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(QtGui.QPen(S.INK, 1.0))
+        painter.setBrush(QtGui.QColor(255, 255, 255, 240))
+        painter.drawRect(self._rect)
+
+        font_title = QtGui.QFont("DejaVu Sans")
+        font_title.setPixelSize(max(6, round(10 * k)))
+        font_title.setBold(True)
+        font_small = QtGui.QFont("DejaVu Sans")
+        font_small.setPixelSize(max(6, round(8 * k)))
+
+        # Row 1: title, and the repeat toggle opposite it.
+        painter.setFont(font_title)
+        painter.setPen(S.INK)
+        painter.drawText(
+            QtCore.QRectF(6 * k, 2 * k, w, 18.0 * k),
+            int(QtCore.Qt.AlignmentFlag.AlignVCenter | QtCore.Qt.AlignmentFlag.AlignLeft),
+            "Schedule")
+
+        box_rect, label_pos, _hit = self._repeat_geometry(w, k)
+        painter.setFont(font_small)
+        painter.setPen(S.INK)
+        painter.drawText(label_pos, "Repeat")
+        checked = bool(getattr(self.canvas.model.motion, "repeat", False))
+        painter.setPen(QtGui.QPen(S.INK, 1.2))
+        painter.setBrush(DRIVER if checked else QtGui.QColor(255, 255, 255, 0))
+        painter.drawRoundedRect(box_rect, 2 * k, 2 * k)
+        if checked:
+            painter.setPen(QtGui.QPen(QtGui.QColor("#ffffff"), 1.6))
+            cx, cy = box_rect.center().x(), box_rect.center().y()
+            cs = box_rect.width() * 0.28
+            painter.drawLine(QtCore.QPointF(cx - cs, cy), QtCore.QPointF(cx - cs * 0.2, cy + cs))
+            painter.drawLine(QtCore.QPointF(cx - cs * 0.2, cy + cs), QtCore.QPointF(cx + cs, cy - cs))
+
+        # Row 2: the time axis, clear of row 1 entirely.
+        painter.setFont(font_small)
+        painter.setPen(S.INK_LIGHT)
+        painter.drawText(QtCore.QPointF(plot.left(), self.HEADER_H * k - 5 * k), "0 s")
+        end_label = f"{span:.1f} s"
+        end_w = QtGui.QFontMetricsF(font_small).horizontalAdvance(end_label)
+        painter.drawText(QtCore.QPointF(plot.right() - end_w, self.HEADER_H * k - 5 * k), end_label)
+
+        result = getattr(self.canvas, "motion_result", None)
+        playhead_t = getattr(self.canvas, "motion_time", None)
+        show_playhead = bool(result and result.ok and playhead_t is not None and span > 1e-9)
+
+        for _kind, driver, row_rect in rows:
+            painter.setPen(QtGui.QPen(S.INK_LIGHT, 1.0, QtCore.Qt.PenStyle.DashLine))
+            painter.drawLine(QtCore.QPointF(plot.left(), row_rect.bottom()),
+                             QtCore.QPointF(plot.right(), row_rect.bottom()))
+            painter.setFont(font_small)
+            painter.setPen(S.INK)
+            label = getattr(driver, "label", "") or "Driver"
+            painter.drawText(
+                QtCore.QRectF(4 * k, row_rect.top(), label_w - 6 * k, row_rect.height()),
+                int(QtCore.Qt.AlignmentFlag.AlignVCenter | QtCore.Qt.AlignmentFlag.AlignLeft),
+                label)
+
+            clip = self._clip_rect(row_rect, plot, span, driver, k)
+            fill = QtGui.QColor(DRIVER)
+            fill.setAlpha(70 if driver.schedule.scheduled else 40)
+            painter.setPen(QtGui.QPen(DRIVER, 1.3))
+            painter.setBrush(fill)
+            painter.drawRoundedRect(clip, 3 * k, 3 * k)
+
+        if show_playhead:
+            x = plot.left() + min(1.0, playhead_t / span) * plot.width()
+            painter.setPen(QtGui.QPen(MOTION, 1.2, QtCore.Qt.PenStyle.DashLine))
+            painter.drawLine(QtCore.QPointF(x, plot.top() - 2 * k), QtCore.QPointF(x, plot.bottom()))
+
+        painter.setPen(QtGui.QPen(S.INK_LIGHT, 1.1))
+        for i in (4.0, 8.0, 12.0):
+            painter.drawLine(QtCore.QPointF(w - i, h), QtCore.QPointF(w, h - i))
+        painter.restore()
+
+
 class DriverPreview(QtWidgets.QGraphicsItem):
     """A faint ghost of the driver the tool is about to place.
 
@@ -986,6 +1355,12 @@ class MotionBar(QtWidgets.QFrame):
         self.btn_graph.clicked.connect(editor.toggle_graph)
         layout.addWidget(self.btn_graph)
 
+        self.btn_schedule = QtWidgets.QPushButton("Schedule")
+        self.btn_schedule.setCheckable(True)
+        self.btn_schedule.setToolTip("Choreograph when each driver runs")
+        self.btn_schedule.clicked.connect(editor.toggle_schedule)
+        layout.addWidget(self.btn_schedule)
+
         self.btn_clear = QtWidgets.QPushButton("Clear")
         self.btn_clear.setToolTip("Take the run off the page. The diagram is untouched.")
         self.btn_clear.clicked.connect(editor.clear_motion)
@@ -1012,10 +1387,12 @@ class MotionBar(QtWidgets.QFrame):
         self.btn_graph.setEnabled(has)
         self.btn_clear.setEnabled(has)
         self.btn_static.setEnabled(has and editor._display_mode == "motion")
+        self.btn_schedule.setEnabled(bool(editor.model.motors) or bool(editor.model.actuators))
         for button, checked in (
             (self.btn_play, editor.playing),
             (self.btn_trace, editor.model.motion.trace),
             (self.btn_graph, editor.show_graph),
+            (self.btn_schedule, editor.show_schedule),
         ):
             button.blockSignals(True)
             button.setChecked(checked)
@@ -1056,6 +1433,9 @@ class MotionController:
         self.graph_pos = None
         self.graph_scale = 1.0
         self.motion_curves = []
+        self.show_schedule = False
+        self.schedule_pos = None
+        self.schedule_scale = 1.0
         self.preview_driver = None
         self.preview_at = None
         self.driver_preview = DriverPreview(self)
@@ -1064,6 +1444,8 @@ class MotionController:
         self.scene.addItem(self.motion_overlay)
         self.motion_graph = EffortGraphOverlay(self)
         self.scene.addItem(self.motion_graph)
+        self.schedule_overlay = ScheduleOverlay(self)
+        self.scene.addItem(self.schedule_overlay)
 
     @property
     def display_result(self):
@@ -1106,14 +1488,20 @@ class MotionController:
     def refresh_motion_items(self):
         try:
             self.motion_graph.sync()
+            self.schedule_overlay.sync()
         except RuntimeError:
             return
-        for item in (self.motion_overlay, self.motion_graph):
+        for item in (self.motion_overlay, self.motion_graph, self.schedule_overlay):
             try:
                 item.prepareGeometryChange()
                 item.update()
             except RuntimeError:
                 pass
+
+    def toggle_schedule(self):
+        self.show_schedule = not self.show_schedule
+        self.refresh_motion_items()
+        self.refresh_geometry()
 
     def set_display_mode(self, mode):
         self._display_mode = mode
@@ -1131,6 +1519,11 @@ class MotionController:
 
     def toggle_trace(self):
         self.model.motion.trace = not self.model.motion.trace
+        self.save()
+        self.refresh_geometry()
+
+    def toggle_repeat(self):
+        self.model.motion.repeat = not self.model.motion.repeat
         self.save()
         self.refresh_geometry()
 
@@ -1186,13 +1579,20 @@ class MotionController:
             # nothing to see, which is the point.
             t = t % result.period
         elif t > result.duration:
-            # Nothing periodic to close the loop against (an EXTEND
-            # actuator, say): finish the run and hold there, rather than
-            # snapping back to a pose the mechanism never actually returns
-            # to on its own.
-            t = result.duration
-            self.playing = False
-            self._motion_timer.stop()
+            if self.model.motion.repeat:
+                # Nothing here closes seamlessly, but repeat was asked for
+                # anyway: restart from the top rather than freezing at the
+                # end. The jump is real -- there is no pose in common to
+                # hide it behind -- which is exactly what makes this
+                # different from the ordinary period-based loop above.
+                t = 0.0
+            else:
+                # Finish the run and hold there, rather than snapping back
+                # to a pose the mechanism never actually returns to on its
+                # own.
+                t = result.duration
+                self.playing = False
+                self._motion_timer.stop()
         self.motion_time = t
         try:
             self.motion_overlay.update()

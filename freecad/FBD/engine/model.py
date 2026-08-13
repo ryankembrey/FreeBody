@@ -276,6 +276,28 @@ class LineLoad:
 
 
 @dataclass
+class Schedule:
+    """When a driver actually runs, on the shared motion timeline.
+
+    Before start, and after start + duration, it holds still at whichever
+    end of its own turn it's nearer -- the same as an ordinary support,
+    just one whose target only follows the driver's own profile for as long
+    as its turn lasts. duration of None means it keeps running for the rest
+    of the animation once its turn begins. The default, start 0 and
+    duration None, is exactly the old always-on behaviour, so nothing about
+    an existing diagram changes until a driver's turn is actually narrowed.
+    """
+
+    start: float = 0.0
+    duration: Optional[float] = None
+
+    @property
+    def scheduled(self) -> bool:
+        """False for the default: nothing here narrows the driver's turn."""
+        return self.start != 0.0 or self.duration is not None
+
+
+@dataclass
 class Motor:
     """A rotary driver: turns one link about one grounded joint.
 
@@ -291,6 +313,7 @@ class Motor:
     motion: str = CONTINUOUS  # CONTINUOUS or SWEEP
     sweep: float = 90.0  # degrees either side of the start angle
     label: str = ""
+    schedule: Schedule = field(default_factory=Schedule)
 
 
 @dataclass
@@ -307,6 +330,7 @@ class Actuator:
     speed: float = 50.0  # mm/s
     motion: str = CYCLE  # EXTEND, CYCLE or SINE
     label: str = ""
+    schedule: Schedule = field(default_factory=Schedule)
 
 
 @dataclass
@@ -339,6 +363,10 @@ class Motion:
     fps: int = 30
     trace: bool = True  # draw the path swept by moving joints
     ghosts: int = 0  # faint copies of earlier frames, 0 = none
+    repeat: bool = False  # restart from the top once the run finishes, rather
+    # than stopping there. Only matters when nothing closes seamlessly on its
+    # own: a scheduled sequence, or a one-shot EXTEND actuator. An ordinary
+    # always-on driver already loops on its own natural period regardless.
 
 
 @dataclass
@@ -847,9 +875,15 @@ class Model:
         for d in data.get("line_loads", []):
             m.line_loads[d["id"]] = _make(LineLoad, d)
         for d in data.get("motors", []):
-            m.motors[d["id"]] = _make(Motor, d)
+            mo = _make(Motor, d)
+            if isinstance(mo.schedule, dict):
+                mo.schedule = _make(Schedule, mo.schedule)
+            m.motors[d["id"]] = mo
         for d in data.get("actuators", []):
-            m.actuators[d["id"]] = _make(Actuator, d)
+            ac = _make(Actuator, d)
+            if isinstance(ac.schedule, dict):
+                ac.schedule = _make(Schedule, ac.schedule)
+            m.actuators[d["id"]] = ac
         # Repair a corrupted counter rather than handing out duplicate ids.
         used = (
             [n for n in m.nodes]

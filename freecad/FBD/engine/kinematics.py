@@ -253,6 +253,25 @@ def _inertial_load(model: Model, system: "MechanismSystem", accel: dict) -> np.n
 # === the constraint system
 
 
+def _schedule_window(schedule, t):
+    """(local_t, active) for this instant on the shared timeline.
+
+    local_t is what the driver's own profile function should be given;
+    active says whether it is actually moving right now, as opposed to
+    holding still at one end of its turn because it either hasn't started
+    yet or has already finished. Before start it sits at its own t=0 pose;
+    once its turn ends it holds at wherever local_t its turn lasted.
+    """
+    if schedule is None or not schedule.scheduled:
+        return t, True
+    local = t - schedule.start
+    if local < 0.0:
+        return 0.0, False
+    if schedule.duration is not None and local > schedule.duration:
+        return schedule.duration, False
+    return local, True
+
+
 class MechanismSystem:
     """The assembled constraint system for one model, reusable across frames."""
 
@@ -418,16 +437,28 @@ class MechanismSystem:
     def driver_targets(
         self, t: float
     ) -> Tuple[Dict[int, Tuple[float, float]], Dict[int, Tuple[float, float]]]:
-        """(motor angles, actuator lengths) with their time derivatives."""
+        """(motor angles, actuator lengths) with their time derivatives.
+
+        Each driver is given its own scheduled instant rather than t
+        directly, so one holding position outside its turn reports a target
+        that has stopped changing, and -- just as importantly -- a rate of
+        zero rather than the rate its profile would have if it were still
+        running: the difference between actually being still and merely
+        being asked about a frozen position.
+        """
         angles = {}
         for mo in self.model.motors.values():
             if mo.id in self.motor_start:
-                angles[mo.id] = motor_angle(mo, t, self.motor_start[mo.id])
+                local_t, active = _schedule_window(getattr(mo, "schedule", None), t)
+                theta, omega = motor_angle(mo, local_t, self.motor_start[mo.id])
+                angles[mo.id] = (theta, omega if active else 0.0)
         lengths = {}
         for ac in self.model.actuators.values():
             base = self.member_length0.get(ac.member)
             if base is not None:
-                lengths[ac.id] = actuator_length(ac, t, base)
+                local_t, active = _schedule_window(getattr(ac, "schedule", None), t)
+                length, rate = actuator_length(ac, local_t, base)
+                lengths[ac.id] = (length, rate if active else 0.0)
         return angles, lengths
 
     def residual(self, q, t) -> np.ndarray:
@@ -854,23 +885,44 @@ def simulate(
     system = MechanismSystem(model)
     result.warnings = list(system.warnings)
     requested = float(duration if duration is not None else model.motion.duration)
-    period = _mechanism_period(model)
-    if period and 1e-6 < period:
-        # Round up to a whole number of cycles, so the last frame's pose is
-        # exactly the first frame's pose and playback can loop with nothing
-        # to see at the seam. Capped in absolute terms, not by how many
-        # cycles that takes, so an unusually slow driver can't balloon this
-        # into simulating minutes of frames nobody asked for.
-        cycles = max(1, round(requested / period))
-        candidate = cycles * period
-        if candidate <= 60.0:
-            duration = candidate
+
+    scheduled = any(getattr(mo, "schedule", None) and mo.schedule.scheduled
+                    for mo in model.motors.values()) \
+        or any(getattr(ac, "schedule", None) and ac.schedule.scheduled
+               for ac in model.actuators.values())
+
+    if scheduled:
+        # A choreographed sequence: cover every driver's own turn in full,
+        # and don't try to force a seamless loop over the whole thing --
+        # the point is a one-off performance, not a repeating cycle, so a
+        # duration that lands mid-stroke for some driver is expected here,
+        # not a seam to round away.
+        sequence_end = requested
+        for driver in list(model.motors.values()) + list(model.actuators.values()):
+            sc = getattr(driver, "schedule", None)
+            if sc and sc.scheduled:
+                span = sc.duration if sc.duration is not None else max(0.0, requested - sc.start)
+                sequence_end = max(sequence_end, sc.start + span)
+        duration = sequence_end
+        period = None
+    else:
+        period = _mechanism_period(model)
+        if period and 1e-6 < period:
+            # Round up to a whole number of cycles, so the last frame's pose is
+            # exactly the first frame's pose and playback can loop with nothing
+            # to see at the seam. Capped in absolute terms, not by how many
+            # cycles that takes, so an unusually slow driver can't balloon this
+            # into simulating minutes of frames nobody asked for.
+            cycles = max(1, round(requested / period))
+            candidate = cycles * period
+            if candidate <= 60.0:
+                duration = candidate
+            else:
+                duration = requested
+                period = None
         else:
             duration = requested
             period = None
-    else:
-        duration = requested
-        period = None
     result.period = period
     fps = int(fps if fps is not None else model.motion.fps)
     fps = max(1, min(240, fps))
