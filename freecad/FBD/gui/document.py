@@ -29,6 +29,12 @@ class Diagram:
         obj.Data = Model().to_dict()
 
     def execute(self, obj):
+        if _deleting["busy"]:
+            # A deletion in progress is driving this recompute purely so
+            # other things in the document catch up -- it must never be
+            # read as "the sketch changed", or auto-sync would immediately
+            # recreate whatever was just deliberately deleted.
+            return
         sketch = getattr(obj, "Sketch", None)
         if sketch is None or not getattr(obj, "AutoSync", True):
             return
@@ -94,10 +100,43 @@ class ViewProviderDiagram:
     def onDelete(self, vobj, subelements):
         """Let the deletion finish before anything else touches the tree.
 
-        Removing objects from inside onDelete corrupts the command FreeCAD is
-        recording for undo, because it is mid-transaction and writing the
-        deletion out as a Python string. So nothing happens here.
+        Removing objects from inside onDelete corrupts the command
+        FreeCAD is recording for undo, because it is mid-transaction and
+        writing the deletion out as a Python string. Everything this
+        needs -- which structures and children to remove, and which
+        editor page to close -- is captured now, while the object is
+        still valid; only the actual cleanup waits for the transaction
+        to close.
         """
+        obj = getattr(vobj, "Object", None)
+        if obj is None or obj.Document is None:
+            return True
+        doc = obj.Document
+        name = obj.Name
+        captured = [
+            (s.Name, [c.Name for c in list(getattr(s, "Group", []))])
+            for s in list(getattr(obj, "Group", []))
+        ]
+
+        def cleanup():
+            for sname, cnames in captured:
+                for cname in cnames:
+                    try:
+                        doc.removeObject(cname)
+                    except Exception:
+                        pass
+                try:
+                    doc.removeObject(sname)
+                except Exception:
+                    pass
+            try:
+                from .editor_host import close_editor
+                close_editor(name)
+            except Exception:
+                pass
+
+        from PySide6 import QtCore
+        QtCore.QTimer.singleShot(0, cleanup)
         return True
 
     def claimChildren(self):
@@ -120,15 +159,26 @@ class ViewProviderStructure:
         self.Object = vobj.Object
 
     def onDelete(self, vobj, subelements):
-        """Delete the whole structure from the diagram, after the fact."""
+        """Delete the whole structure from the diagram, after the fact.
+
+        Only needs one surviving joint from this structure's own Group
+        listing -- the rest of what to delete comes from asking the model
+        which whole connected structure that joint belongs to, computed
+        fresh rather than trusted from whatever the tree happened to be
+        showing. That's what makes this atomic even if the Group listing
+        itself were ever incomplete: it's only ever used to find a way in,
+        not trusted for the full membership.
+        """
         obj = getattr(vobj, "Object", None)
         if obj is None:
             return True
-        targets = []
+        anchor = None
         for child in list(getattr(obj, "Group", [])):
             kind, ident = _parse_entity(getattr(child, "Name", ""))
-            if kind:
-                targets.append((kind, ident))
+            if kind == "node":
+                anchor = ident
+                break
+        targets = [("component", anchor)] if anchor is not None else []
         _delete_later(_owning_diagram(obj), targets)
         return True
 

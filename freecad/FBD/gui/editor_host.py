@@ -49,6 +49,23 @@ def set_active(editor):
     _ACTIVE["editor"] = editor
 
 
+def close_editor(name):
+    """Close the editor for a diagram object, if one is open.
+
+    Used when the diagram itself is deleted, so its page doesn't linger
+    open on a document object that no longer exists.
+    """
+    entry = _OPEN.get(name)
+    if not entry:
+        return
+    sub_window, _editor = entry
+    try:
+        sub_window.close()
+    except RuntimeError:
+        pass
+    _forget(name)
+
+
 def _forget(name):
     _OPEN.pop(name, None)
     if not _OPEN:

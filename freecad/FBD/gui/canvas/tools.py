@@ -59,9 +59,9 @@ class Tool:
 class SelectTool(Tool):
     name = "Select"
     prompt = (
-        "Click to select. Drag a joint to move it (Shift extends to its "
-        "structure). Drag the edge of a structure's box to move it all, "
-        "or its corner to resize it."
+        "Click to select. Drag a joint, a member, or the edge of a "
+        "structure's box to move the whole thing; its corner resizes it. "
+        "A structure's shape always matches its sketch."
     )
     snaps_to_grid = False
 

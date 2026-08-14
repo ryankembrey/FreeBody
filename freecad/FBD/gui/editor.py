@@ -689,9 +689,6 @@ class Editor(QtWidgets.QWidget, MotionController):
             return True
 
         if self.tool.name == "Select":
-            modifiers = QtWidgets.QApplication.keyboardModifiers()
-            shift_held = bool(modifiers & QtCore.Qt.KeyboardModifier.ShiftModifier)
-
             # 1. Check the bounding box: corner resizes the structure,
             # edge drags the whole thing.
             comp, rect = self._find_component_at(scene_pos)
@@ -704,13 +701,19 @@ class Editor(QtWidgets.QWidget, MotionController):
                     self._start_node_drag(comp, ref_node, model_pos)
                     return True
 
-            # 2. Check joint
+            # 2. A joint or a member: either way, move the whole structure
+            # it belongs to. A structure's real shape comes from its
+            # sketch, not from dragging one point of it out of place, so
+            # there is no way to reposition just one joint any more --
+            # only the structure as a whole, which changes where it sits
+            # on the page and nothing about what it actually is.
             node_id = self.node_near(scene_pos)
+            if node_id is None:
+                member_id = self.member_near(scene_pos)
+                member = self.model.members.get(member_id) if member_id is not None else None
+                node_id = member.start if member else None
             if node_id is not None:
-                if shift_held:
-                    comp_nodes = self._connected_component(node_id)
-                else:
-                    comp_nodes = {node_id}
+                comp_nodes = self._connected_component(node_id)
                 self._start_node_drag(comp_nodes, node_id, model_pos)
                 return False
 
@@ -752,7 +755,9 @@ class Editor(QtWidgets.QWidget, MotionController):
             self.view.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
         elif self._dragging_nodes:
             self.view.setCursor(QtCore.Qt.CursorShape.ClosedHandCursor)
-        elif self.tool.name == "Select" and self.node_near(scene_pos) is not None:
+        elif self.tool.name == "Select" and (
+            self.node_near(scene_pos) is not None or self.member_near(scene_pos) is not None
+        ):
             self.view.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
         else:
             self.view.setCursor(

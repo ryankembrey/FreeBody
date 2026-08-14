@@ -19,22 +19,31 @@ class FBDWorkbench(Gui.Workbench):
     def Initialize(self):
         self.document = ["FBD_NewDiagram", "FBD_OpenDiagram", "FBD_ImportSketch", "FBD_SyncSketch"]
         self.draw = ["FBD_ToolSelect", "FBD_ToolAnchor"]
-        self.supports = ["FBD_ToolPin", "FBD_ToolRoller", "FBD_ToolFixed", "FBD_ToolSpring"]
+        # Pivot lives here, not with Motor/Actuator: it constrains a point,
+        # the same job as every other support, just at a point on a member
+        # rather than at a joint.
+        self.supports = ["FBD_ToolPin", "FBD_ToolRoller", "FBD_ToolFixed",
+                         "FBD_ToolSpring", "FBD_ToolPivot"]
         self.loads = ["FBD_ToolForce", "FBD_ToolMoment", "FBD_ToolLineLoad"]
-        self.mechanism = ["FBD_ToolPivot", "FBD_ToolMotor", "FBD_ToolActuator", "FBD_RunMotion"]
-        self.view = ["FBD_ToggleSnap", "FBD_FitView", "FBD_Solve", "FBD_ExportPDF"]
+        self.mechanism = ["FBD_ToolMotor", "FBD_ToolActuator", "FBD_RunMotion"]
+        self.analysis = ["FBD_Solve"]
+        self.view = ["FBD_ToggleSnap", "FBD_FitView"]
+        self.output = ["FBD_ExportPDF"]
 
-        # Main Toolbar
+        # Main Toolbar: build geometry, constrain it, load it, optionally
+        # animate it, solve it, then adjust the view or ship it out.
         self.appendToolbar(
             "FBD",
-            self.document + self.draw + self.supports + self.loads + self.mechanism + self.view,
+            self.document + self.draw + self.supports + self.loads + self.mechanism
+            + self.analysis + self.view + self.output,
         )
 
-        self.appendMenu("FBD", self.document + ["FBD_ExportPDF"])
+        self.appendMenu("FBD", self.document + self.output)
         self.appendMenu(["FBD", "Draw"], self.draw)
         self.appendMenu(["FBD", "Supports"], self.supports)
         self.appendMenu(["FBD", "Loads"], self.loads)
         self.appendMenu(["FBD", "Mechanism"], self.mechanism)
+        self.appendMenu(["FBD", "Analysis"], self.analysis)
         self.appendMenu(["FBD", "View"], self.view)
 
     def Activated(self):
