@@ -1704,7 +1704,7 @@ class SingleDiagramOverlay(QtWidgets.QGraphicsItem):
             poly.append(pb)
             p.addPolygon(QtGui.QPolygonF(poly))
         stroker = QtGui.QPainterPathStroker()
-        stroker.setWidth(self.canvas.px(10.0))
+        stroker.setWidth(8.0)
         return p + stroker.createStroke(p)
 
     def paint(self, painter, option, widget=None):
@@ -2250,7 +2250,7 @@ class DeflectionOverlay(QtWidgets.QGraphicsItem):
         pts = [to_scene(n.x, n.y, sc) for n in model.nodes.values()]
         xs = [p.x() for p in pts]
         ys = [p.y() for p in pts]
-        pad = self.canvas.px(40.0)
+        pad = 40.0
         return QtCore.QRectF(
             min(xs) - pad,
             min(ys) - pad,
@@ -2288,7 +2288,7 @@ class DeflectionOverlay(QtWidgets.QGraphicsItem):
             p.moveTo(to_scene(p_ax, p_ay, sc))
             p.lineTo(to_scene(p_bx, p_by, sc))
         stroker = QtGui.QPainterPathStroker()
-        stroker.setWidth(self.canvas.px(24.0))
+        stroker.setWidth(12.0)
         return stroker.createStroke(p)
 
     def paint(self, painter, option, widget=None):

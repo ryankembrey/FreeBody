@@ -358,14 +358,9 @@ class Editor(QtWidgets.QWidget, MotionController):
                 }
 
     def _component_bounds(self, comp_nodes) -> QtCore.QRectF:
-        # Real scene position, the same as everything drawn. This used to
-        # multiply by scale instead of dividing, which only ever matched
-        # reality while unit_scale sat at 1 -- true for a freehand diagram
-        # that never touched it, but every sketch import now sets a real
-        # scale, and the box would land far from wherever the structure
-        # actually is: invisible in practice, not merely misplaced.
+        sc = self.global_scale
         pts = [
-            I.to_scene(self.model.nodes[n].x, self.model.nodes[n].y, self.global_scale)
+            I.to_scene(self.model.nodes[n].x, self.model.nodes[n].y, sc)
             for n in comp_nodes
             if n in self.model.nodes
         ]
@@ -374,12 +369,23 @@ class Editor(QtWidgets.QWidget, MotionController):
         xs = [p.x() for p in pts]
         ys = [p.y() for p in pts]
         pad = 18.0
-        return QtCore.QRectF(
+        rect = QtCore.QRectF(
             min(xs) - pad,
             min(ys) - pad,
             (max(xs) - min(xs)) + 2 * pad,
             (max(ys) - min(ys)) + 2 * pad,
         )
+        return rect.normalized()
+
+    def _find_component_at(self, scene_pos):
+        from ..engine.checks import _components
+        tol = self.px(14.0)
+        components = _components(self.model)
+        for comp in components:
+            rect = self._component_bounds(comp)
+            if rect.adjusted(-tol, -tol, tol, tol).contains(scene_pos):
+                return comp, rect
+        return None, None
 
     def _is_near_box_corner(self, scene_pos, rect, tol_pixels=14.0) -> bool:
         tol = self.px(tol_pixels)
@@ -397,22 +403,6 @@ class Editor(QtWidgets.QWidget, MotionController):
         dist_top = abs(y - r.top())
         dist_bottom = abs(y - r.bottom())
         return min(dist_left, dist_right, dist_top, dist_bottom) <= tol
-
-    def _find_component_at(self, scene_pos):
-        from ..engine.checks import _components
-
-        # Padded by the corner hit-zone: that hit-zone is a circle centred
-        # on the rect's own corner, so half of it sits just outside the
-        # strict rect -- exactly where hovering to grab a corner naturally
-        # lands. Without this, that whole outer half was rejected before
-        # the corner check ever ran, which is why the cursor never changed.
-        tol = self.px(14.0)
-        components = _components(self.model)
-        for comp in components:
-            rect = self._component_bounds(comp)
-            if rect.adjusted(-tol, -tol, tol, tol).contains(scene_pos):
-                return comp, rect
-        return None, None
 
     def _connected_component(self, start_node_id: int) -> set:
         model = self.model
