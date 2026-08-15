@@ -47,23 +47,25 @@ class FBDWorkbench(Gui.Workbench):
             "FBD_ToggleResultsTable",
             "FBD_ToggleSheet",
         ]
-        self.view = ["FBD_ToggleSnap", "FBD_FitView"]
+        self.view = ["FBD_FitView"]
         self.output = ["FBD_ExportPDF"]
 
         # Main Toolbar: build geometry, constrain it, load it, optionally
-        # animate it, solve it, then adjust the view or ship it out.
+        # animate it, solve it, then adjust the view or ship it out --
+        # grouped with separators the same way the menu is grouped into
+        # submenus, so one long toolbar still reads as distinct sections.
         self.appendToolbar(
             "FBD",
             self.document
-            + self.draw
-            + self.supports
-            + self.loads
-            + self.mechanism
-            + self.analysis
-            + self.diagrams
-            + self.display
-            + self.view
-            + self.output,
+            + ["Separator"] + self.draw
+            + ["Separator"] + self.supports
+            + ["Separator"] + self.loads
+            + ["Separator"] + self.mechanism
+            + ["Separator"] + self.analysis
+            + ["Separator"] + self.diagrams
+            + ["Separator"] + self.display
+            + ["Separator"] + self.view
+            + ["Separator"] + self.output,
         )
 
         self.appendMenu("FBD", self.document + self.output)

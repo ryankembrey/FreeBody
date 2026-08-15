@@ -311,7 +311,7 @@ class ToggleSheetBoundary(_HUDToggleCommand):
 
 
 class SyncSketch(_Command):
-    icon = "fbd_import_sketch.svg"
+    icon = "fbd_sync_sketch.svg"
     text = "Sync Sketch"
     tip = "Re-read the linked sketch, keeping supports and loads."
 
@@ -377,20 +377,6 @@ class FitView(_Command):
         editor = active_editor()
         if editor is not None:
             editor.fit()
-
-
-class ToggleSnap(_Command):
-    icon = "tool_snap.svg"
-    text = "Snap"
-    tip = "Snap to the grid and to existing joints."
-
-    def IsActive(self):
-        return active_editor() is not None
-
-    def Activated(self):
-        editor = active_editor()
-        if editor is not None:
-            editor.snap_enabled = not editor.snap_enabled
 
 
 class NewDiagram(_Command):
@@ -555,9 +541,17 @@ class SolveDiagram(_Command):
 
 
 class ExportPDF(_Command):
-    icon = "fbd_new.svg"
     text = "Export PDF"
     tip = "Export diagram sheet to a PDF file."
+
+    def GetResources(self):
+        # FreeCAD's own export icon, not a hand-drawn one: this is
+        # the same generic "export a file" action already on File >
+        # Export (Ctrl+E), and Std_Export is the icon FreeCAD itself
+        # uses there.
+        res = super().GetResources()
+        res["Pixmap"] = "Std_Export"
+        return res
 
     def IsActive(self):
         return active_editor() is not None
@@ -597,7 +591,6 @@ COMMANDS = {
     "FBD_ToggleSheet": ToggleSheetBoundary,
     "FBD_SyncSketch": SyncSketch,
     "FBD_RunMotion": RunMotion,
-    "FBD_ToggleSnap": ToggleSnap,
     "FBD_FitView": FitView,
     "FBD_Solve": SolveDiagram,
     "FBD_ExportPDF": ExportPDF,

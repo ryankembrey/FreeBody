@@ -1331,22 +1331,9 @@ class ScheduleOverlay(QtWidgets.QGraphicsItem):
         _ = (option, widget)
         if not self._visible():
             return
-        curves = self.canvas.motion_curves
-        k = self.graph_scale
-        w, h = self.W * k, self.H * k
+        k = self.panel_scale
+        w, h, label_w, plot, rows = self._layout(k)
         self._rect = QtCore.QRectF(0, 0, w, h)
-
-        pad = 8.0 * k
-        title_h = 15.0 * k
-        legend_h = (11.0 * k) * len(curves) + 4.0 * k
-        plot = QtCore.QRectF(
-            pad + 26.0 * k,
-            title_h + pad * 0.5,
-            w - pad * 2 - 26.0 * k,
-            h - title_h - legend_h - pad * 1.5,
-        )
-        if plot.width() < 10 or plot.height() < 10:
-            return
 
         painter.save()
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
@@ -1369,7 +1356,7 @@ class ScheduleOverlay(QtWidgets.QGraphicsItem):
             "Schedule",
         )
 
-        box_rect, label_pos, _ = self._repeat_geometry(w, k)
+        box_rect, label_pos, _hit = self._repeat_geometry(w, k)
         painter.setFont(font_small)
         painter.setPen(S.INK)
         painter.drawText(label_pos, "Repeat")
@@ -1390,6 +1377,7 @@ class ScheduleOverlay(QtWidgets.QGraphicsItem):
         painter.setFont(font_small)
         painter.setPen(S.INK_LIGHT)
         painter.drawText(QtCore.QPointF(plot.left(), self.HEADER_H * k - 5 * k), "0 s")
+        span = self._span()
         end_label = f"{span:.1f} s"
         end_w = QtGui.QFontMetricsF(font_small).horizontalAdvance(end_label)
         painter.drawText(QtCore.QPointF(plot.right() - end_w, self.HEADER_H * k - 5 * k), end_label)
@@ -1398,7 +1386,7 @@ class ScheduleOverlay(QtWidgets.QGraphicsItem):
         playhead_t = float(getattr(self.canvas, "motion_time", 0.0))
         show_playhead = bool(result and result.ok and span > 1e-9)
 
-        for _, driver, row_rect in rows:
+        for _kind, driver, row_rect in rows:
             painter.setPen(QtGui.QPen(S.INK_LIGHT, 1.0, QtCore.Qt.PenStyle.DashLine))
             painter.drawLine(
                 QtCore.QPointF(plot.left(), row_rect.bottom()),
@@ -1421,7 +1409,7 @@ class ScheduleOverlay(QtWidgets.QGraphicsItem):
             painter.drawRoundedRect(clip, 3 * k, 3 * k)
 
         if show_playhead:
-            x = plot.left() + min(1.0, float(playhead_t) / float(span)) * float(plot.width())
+            x = plot.left() + min(1.0, playhead_t / span) * plot.width()
             painter.setPen(QtGui.QPen(MOTION, 1.2, QtCore.Qt.PenStyle.DashLine))
             painter.drawLine(
                 QtCore.QPointF(x, plot.top() - 2 * k), QtCore.QPointF(x, plot.bottom())
@@ -1431,7 +1419,6 @@ class ScheduleOverlay(QtWidgets.QGraphicsItem):
         for i in (4.0, 8.0, 12.0):
             painter.drawLine(QtCore.QPointF(w - i, h), QtCore.QPointF(w, h - i))
         painter.restore()
-
 
 class DriverPreview(QtWidgets.QGraphicsItem):
     """A faint ghost of the driver the tool is about to place.
