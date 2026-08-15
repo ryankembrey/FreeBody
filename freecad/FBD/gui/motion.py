@@ -280,9 +280,6 @@ class ActuatorItem(_Item):
             text, colour = self._label(ac)
             if text:
                 mid = QtCore.QPointF((a.x() + b.x()) / 2.0, (a.y() + b.y()) / 2.0)
-                # Read along the ram, not flat: flip 180 degrees whenever
-                # that would otherwise draw it upside down, so it always
-                # stays within +/-90 degrees of upright.
                 angle_deg = math.degrees(math.atan2(uy, ux))
                 flipped = False
                 if angle_deg > 90.0:
@@ -292,11 +289,7 @@ class ActuatorItem(_Item):
                     angle_deg += 180.0
                     flipped = True
 
-                # Prevent the text from physically jumping a full line-height when crossing vertical
                 vert_offset = 12.0 if flipped else 0.0
-                # Parallel text alongside a parallel line reads as touching
-                # at a gap that looked fine crossing it at an angle, so this
-                # sits noticeably further off than the un-rotated labels do.
                 px_text(
                     painter,
                     self.canvas,
@@ -311,23 +304,12 @@ class ActuatorItem(_Item):
                 )
 
     def _label(self, ac):
-        """Nothing on the canvas until a motion has run, then the push or
-        pull force, read at the frame on screen so scrubbing through the
-        stroke shows where the demand actually is.
-
-        Stroke and speed already live in the popup double-click brings up.
-        Showing them on the page as well just adds clutter, and with two
-        actuators anywhere near each other their labels reliably overlap
-        into something unreadable -- worse than showing nothing.
-        """
         result = getattr(self.canvas, "motion_result", None)
         if not (result and result.ok and result.frames):
             return None, None
         frame = result.frame_at(getattr(self.canvas, "motion_time", 0.0))
         force = frame.effort.get(ac.id)
         if force is None:
-            # A held frame at a limit position: the force there is unbounded,
-            # so quoting a number would be a lie.
             return "at its limit", self.ink(DRIVER)
         if abs(force) < 1e-6:
             return "no load on it", S.INK_LIGHT
@@ -505,7 +487,12 @@ class MotionOverlay(QtWidgets.QGraphicsItem):
         super().__init__()
         self.canvas = canvas
         self.setZValue(45)
-        self.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
+        # Enable interaction for the inline scrubber
+        self.setAcceptedMouseButtons(QtCore.Qt.MouseButton.LeftButton)
+        self.setAcceptHoverEvents(True)
+        self._scrubbing = False
+        self._hover_play = False
+        self._hover_timeline = False
 
     def sc(self):
         sheet = getattr(getattr(self.canvas, "model", None), "sheet", None)
@@ -530,6 +517,65 @@ class MotionOverlay(QtWidgets.QGraphicsItem):
             min(xs) / sc, min(ys) / sc, (max(xs) - min(xs)) / sc, (max(ys) - min(ys)) / sc
         ).adjusted(-60, -60, 60, 60)
 
+    def _ui_rects(self):
+        result = getattr(self.canvas, "motion_result", None)
+        if not result or not result.ok or not result.frames:
+            return None
+        model = self.canvas.model
+        active_nodes = [n for n in model.nodes.values() if n.id in result.frames[0].velocities]
+        if not active_nodes:
+            active_nodes = list(model.nodes.values())
+        if not active_nodes:
+            return None
+        sc = self.sc()
+        pts = [to_scene(n.x, n.y, sc) for n in active_nodes]
+        xs = [p.x() for p in pts]
+        ys = [p.y() for p in pts]
+
+        # Fixed scene-unit pad to align exactly with the StructureBoundsOverlay dashed line
+        pad = 18.0
+        rect = QtCore.QRectF(
+            min(xs) - pad,
+            min(ys) - pad,
+            (max(xs) - min(xs)) + 2 * pad,
+            (max(ys) - min(ys)) + 2 * pad,
+        )
+
+        # Screen-constant scaling factor
+        k = self.canvas.px(1.0)
+
+        play_r = 11.0 * k
+        play_rect = QtCore.QRectF(rect.left(), rect.top() - play_r, play_r * 2, play_r * 2)
+
+        timeline_start = rect.left() + play_r * 2 + 15.0 * k
+        timeline_end = rect.right()
+        timeline_rect = QtCore.QRectF(
+            timeline_start, rect.top() - 12.0 * k, timeline_end - timeline_start, 24.0 * k
+        )
+
+        return rect, play_rect, timeline_rect
+
+    def hit_test(self, scene_pos):
+        """True when scene_pos lands on the play button or the scrubber.
+
+        The Select tool's own click handling runs before Qt ever hands the
+        event to this item, and it grabs the nearest joint on anything
+        close enough -- which is *very* close here, since this overlay
+        tracks the structure's own bounding box. Editor.handle_click and
+        handle_move both check this first and step aside if it's true, the
+        same way they already do for an open popup.
+        """
+        rects = self._ui_rects()
+        if not rects:
+            return False
+        _, play_rect, timeline_rect = rects
+        k = self.canvas.px(1.0)
+        if play_rect.adjusted(-12.0 * k, -12.0 * k, 12.0 * k, 12.0 * k).contains(scene_pos):
+            return True
+        if timeline_rect.adjusted(-12.0 * k, -18.0 * k, 12.0 * k, 18.0 * k).contains(scene_pos):
+            return True
+        return False
+
     def paint(self, painter, option, widget=None):
         _ = (option, widget)
         result = getattr(self.canvas, "motion_result", None)
@@ -544,7 +590,6 @@ class MotionOverlay(QtWidgets.QGraphicsItem):
         def point(pos):
             return to_scene(pos[0], pos[1], sc)
 
-        # Traces first, so the linkage sits on top of its own path.
         if model.motion.trace:
             pen = QtGui.QPen(TRACE, 1.0, QtCore.Qt.PenStyle.DashLine)
             pen.setCosmetic(True)
@@ -564,25 +609,22 @@ class MotionOverlay(QtWidgets.QGraphicsItem):
         if ghosts:
             total = len(result.frames)
             index = result.frames.index(frame) if frame in result.frames else 0
-            for k in range(1, ghosts + 1):
-                past = result.frames[(index - k * max(1, total // (ghosts * 6))) % total]
+            for k_ in range(1, ghosts + 1):
+                past = result.frames[(index - k_ * max(1, total // (ghosts * 6))) % total]
                 self._draw_pose(painter, model, past, MOTION_GHOST, 1.4)
 
         self._draw_pose(painter, model, frame, MOTION, 3.0)
 
-        # Speed readout on the fastest joint, so the numbers are not just in a
-        # table somewhere: the diagram is the report.
         if getattr(self.canvas, "label_motion", True):
             fastest, best = None, 0.0
             for nid, v in frame.velocities.items():
                 speed = math.hypot(*v)
                 if speed > best:
                     fastest, best = nid, speed
-            # Hysteresis: prevent the label from flickering wildly between joints with similar speeds
             last_f = getattr(self, "_last_fastest", None)
             if last_f is not None and last_f in frame.velocities:
                 last_speed = math.hypot(*frame.velocities[last_f])
-                if last_speed >= best * 0.90:  # Keep old fastest if it's within 10% of new best
+                if last_speed >= best * 0.90:
                     fastest = last_f
                     best = last_speed
             self._last_fastest = fastest
@@ -597,6 +639,83 @@ class MotionOverlay(QtWidgets.QGraphicsItem):
                     MOTION,
                     12.0,
                 )
+
+        # Draw Scrubber UI
+        rects = self._ui_rects()
+        if rects:
+            box_rect, play_rect, timeline_rect = rects
+            playing = self.canvas.playing
+            hover_play = getattr(self, "_hover_play", False)
+            k = self.canvas.px(1.0)
+
+            # Draw Play/Pause Circle
+            painter.setPen(QtCore.Qt.PenStyle.NoPen)
+            painter.setBrush(QtGui.QColor("#00897b") if hover_play else QtGui.QColor("#00695c"))
+            painter.drawEllipse(play_rect)
+
+            # Draw Play/Pause Icon
+            painter.setBrush(QtGui.QColor("#ffffff"))
+            if playing:
+                w = play_rect.width() * 0.15
+                h = play_rect.height() * 0.4
+                cx, cy = play_rect.center().x(), play_rect.center().y()
+                painter.drawRect(QtCore.QRectF(cx - w * 1.5, cy - h / 2, w, h))
+                painter.drawRect(QtCore.QRectF(cx + w * 0.5, cy - h / 2, w, h))
+            else:
+                r = play_rect.width() * 0.25
+                cx, cy = play_rect.center().x(), play_rect.center().y()
+                poly = QtGui.QPolygonF(
+                    [
+                        QtCore.QPointF(cx - r * 0.5, cy - r * 0.8),
+                        QtCore.QPointF(cx - r * 0.5, cy + r * 0.8),
+                        QtCore.QPointF(cx + r * 0.9, cy),
+                    ]
+                )
+                painter.drawPolygon(poly)
+
+            # Draw Timeline Track using Cosmetic Pen
+            track_pen = QtGui.QPen(QtGui.QColor("#c3c8d2"), 1.8)
+            track_pen.setCosmetic(True)
+            painter.setPen(track_pen)
+            painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+            y = timeline_rect.center().y()
+            painter.drawLine(
+                QtCore.QPointF(timeline_rect.left(), y), QtCore.QPointF(timeline_rect.right(), y)
+            )
+
+            # Draw Progress Track using Cosmetic Pen
+            fraction = 0.0
+            if result.duration > 1e-9:
+                fraction = max(0.0, min(1.0, self.canvas.motion_time / result.duration))
+            curr_x = timeline_rect.left() + fraction * timeline_rect.width()
+
+            progress_pen = QtGui.QPen(QtGui.QColor("#00897b"), 1.8)
+            progress_pen.setCosmetic(True)
+            painter.setPen(progress_pen)
+            painter.drawLine(QtCore.QPointF(timeline_rect.left(), y), QtCore.QPointF(curr_x, y))
+
+            # Draw Scrubber Handle
+            hover_time = getattr(self, "_hover_timeline", False) or getattr(
+                self, "_scrubbing", False
+            )
+            hr = 5.0 * k if hover_time else 4.0 * k
+            painter.setPen(QtCore.Qt.PenStyle.NoPen)
+            painter.setBrush(QtGui.QColor("#00897b"))
+            painter.drawEllipse(QtCore.QPointF(curr_x - hr, y), hr * 2, hr * 2)
+
+            # Draw Time Label using px_text outline font centered above timeline
+            time_text = f"{self.canvas.motion_time:.2f}s / {result.duration:.2f}s"
+            mid_x = (timeline_rect.left() + timeline_rect.right()) / 2.0
+            label_pos = QtCore.QPointF(mid_x, box_rect.top() - 12.0 * k)
+            px_text(
+                painter,
+                self.canvas,
+                label_pos,
+                time_text,
+                QtGui.QColor("#37474f"),
+                size_pt=9.5,
+                bold=True,
+            )
 
     def _draw_pose(self, painter, model, frame, colour, width):
         sc = self.sc()
@@ -615,6 +734,80 @@ class MotionOverlay(QtWidgets.QGraphicsItem):
         painter.setPen(QtCore.Qt.PenStyle.NoPen)
         for _, pos in frame.positions.items():
             painter.drawEllipse(to_scene(pos[0], pos[1], sc), radius, radius)
+
+    def hoverMoveEvent(self, event):
+        rects = self._ui_rects()
+        if rects:
+            _, play_rect, timeline_rect = rects
+            pos = event.pos()
+            k = self.canvas.px(1.0)
+
+            # Padded hit-boxes for extremely forgiving hover states
+            play_hit_rect = play_rect.adjusted(-12.0 * k, -12.0 * k, 12.0 * k, 12.0 * k)
+            hit_timeline = timeline_rect.adjusted(-12.0 * k, -18.0 * k, 12.0 * k, 18.0 * k)
+
+            self._hover_play = play_hit_rect.contains(pos)
+            self._hover_timeline = hit_timeline.contains(pos)
+            if self._hover_play or self._hover_timeline:
+                self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+            else:
+                self.unsetCursor()
+            self.update()
+        super().hoverMoveEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self._hover_play = False
+        self._hover_timeline = False
+        self.unsetCursor()
+        self.update()
+        super().hoverLeaveEvent(event)
+
+    def mousePressEvent(self, event):
+        rects = self._ui_rects()
+        if rects and event.button() == QtCore.Qt.MouseButton.LeftButton:
+            _, play_rect, timeline_rect = rects
+            pos = event.pos()
+            k = self.canvas.px(1.0)
+
+            # Mirror the exact same padded hit-boxes used in hover states to guarantee 100% alignment
+            play_hit_rect = play_rect.adjusted(-4.0 * k, -4.0 * k, 4.0 * k, 4.0 * k)
+            if play_hit_rect.contains(pos):
+                self.canvas.toggle_play()
+                event.accept()
+                return
+
+            hit_timeline = timeline_rect.adjusted(-4.0 * k, -4.0 * k, 4.0 * k, 4.0 * k)
+            if hit_timeline.contains(pos):
+                self._scrubbing = True
+                self._update_scrub(pos, timeline_rect)
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if getattr(self, "_scrubbing", False):
+            rects = self._ui_rects()
+            if rects:
+                _, _, timeline_rect = rects
+                self._update_scrub(event.pos(), timeline_rect)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if getattr(self, "_scrubbing", False):
+            self._scrubbing = False
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def _update_scrub(self, pos, timeline_rect):
+        result = getattr(self.canvas, "motion_result", None)
+        if not result:
+            return
+        fraction = (pos.x() - timeline_rect.left()) / max(1.0, timeline_rect.width())
+        fraction = max(0.0, min(1.0, fraction))
+        self.canvas.set_motion_time(result.duration * fraction)
 
 
 class EffortGraphOverlay(QtWidgets.QGraphicsItem):
@@ -1138,10 +1331,22 @@ class ScheduleOverlay(QtWidgets.QGraphicsItem):
         _ = (option, widget)
         if not self._visible():
             return
-        k = self.panel_scale
-        w, h, label_w, plot, rows = self._layout(k)
+        curves = self.canvas.motion_curves
+        k = self.graph_scale
+        w, h = self.W * k, self.H * k
         self._rect = QtCore.QRectF(0, 0, w, h)
-        span = self._span()
+
+        pad = 8.0 * k
+        title_h = 15.0 * k
+        legend_h = (11.0 * k) * len(curves) + 4.0 * k
+        plot = QtCore.QRectF(
+            pad + 26.0 * k,
+            title_h + pad * 0.5,
+            w - pad * 2 - 26.0 * k,
+            h - title_h - legend_h - pad * 1.5,
+        )
+        if plot.width() < 10 or plot.height() < 10:
+            return
 
         painter.save()
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
@@ -1300,8 +1505,6 @@ class DriverPreview(QtWidgets.QGraphicsItem):
             )
             painter.drawLine(mid, b)
         else:
-            # A motor goes on the end that is pinned, or the end nearest the
-            # cursor when neither is, which is what the tool will pick.
             at = getattr(self.canvas, "preview_at", None) or a
             r = self.canvas.px(17.0)
             pen = QtGui.QPen(ghost, 2.0)
@@ -1363,8 +1566,6 @@ class MotorTool(_DriverTool):
         if grounded:
             node_id = grounded[0]
         else:
-            # No pin yet: put one at the end nearest the click, because a motor
-            # without a ground is the single most common way to get this wrong.
             node_id = self._nearest_end(scene_pos, member)
             edit(self.canvas, "Ground the motor joint", lambda m: m.add_support(node_id, M.PIN))
         motor = edit(self.canvas, "Add motor", lambda m: m.add_motor(node_id, member_id))
@@ -1412,16 +1613,7 @@ def _static_result_from_frame(model, frame):
     """A motion frame, reshaped to look like a static solve, so the whole
     existing results toolbar -- reaction arrows, the table, the axial
     annotation on a selected member -- can read it without knowing whether
-    it came from Solve or from the middle of a running mechanism.
-
-    A rigid pin-jointed link only ever carries a uniform axial force, so
-    two identical samples stand in for "constant along its length": enough
-    for the existing diagram code to draw a flat band rather than a wedge
-    tapering to nothing at one end, without claiming a shape it doesn't
-    have. There is deliberately nothing here for shear or moment -- a
-    moving mechanism is not an elastic beam, and showing a false zero would
-    be worse than showing nothing.
-    """
+    it came from Solve or from the middle of a quantitative run."""
     result = StaticResult(ok=True, message="From the current instant of the motion run.")
     for ident, (fx, fy) in frame.reactions.items():
         result.reactions[ident] = Reaction(node=ident, fx=fx, fy=fy, m=0.0)
@@ -1440,11 +1632,7 @@ def motion_tools(canvas):
 
 
 class MotionBar(QtWidgets.QFrame):
-    """Transport controls, floating at the foot of the canvas.
-
-    Styled to match DisplayHUD deliberately: it is the same kind of object,
-    a quiet panel over the page rather than a dock or a dialog.
-    """
+    """Transport controls, floating at the foot of the canvas."""
 
     def __init__(self, editor):
         super().__init__()
@@ -1596,8 +1784,8 @@ class MotionController:
         self.show_motion = True
         self.label_motion = True
         self.default_lever_length = 200.0
-        self._display_mode = "static"  # "static" or "motion": which result the toolbar shows
-        self._motion_timer = QtCore.QTimer(self)  # type: ignore
+        self._display_mode = "static"
+        self._motion_timer = QtCore.QTimer(self)
         self._motion_timer.setInterval(33)
         self._motion_timer.timeout.connect(self._advance)
         self.show_graph = True
@@ -1620,9 +1808,6 @@ class MotionController:
 
     @property
     def display_result(self):
-        """Whichever result the static-results toolbar should show right
-        now: the live motion frame while a run is the more recent thing the
-        user did, the ordinary static solve otherwise."""
         if (
             self._display_mode == "motion"
             and self.motion_result
@@ -1648,9 +1833,6 @@ class MotionController:
             self.playing = True
             self._motion_timer.start()
             self._display_mode = "motion"
-            # Neither applies to a moving mechanism: a rigid pin-jointed
-            # link carries no bending at all, so leaving a stale toggle on
-            # would draw a diagram this result has nothing to say about.
             self.show_shear = False
             self.show_moment = False
         self.refresh_motion_items()
@@ -1712,7 +1894,6 @@ class MotionController:
         self.refresh_geometry()
 
     def invalidate_motion(self):
-        """Editing the diagram invalidates a run, exactly as it does a solve."""
         if self.motion_result is not None:
             self.motion_result = None
             self.motion_curves = []
@@ -1722,13 +1903,6 @@ class MotionController:
                 self._display_mode = "static"
 
     def clear_motion(self):
-        """Take the run off the page without touching the diagram.
-
-        Dragging the mechanism used to be the only way to get rid of the
-        traces and the running pose, which meant editing the model just to
-        tidy the screen. This leaves the model, the undo stack and the saved
-        document exactly as they were.
-        """
         self.invalidate_motion()
         self.motion_time = 0.0
         self._display_mode = "static"
@@ -1750,22 +1924,11 @@ class MotionController:
         step = self._motion_timer.interval() / 1000.0
         t = self.motion_time + step
         if result.period and result.period > 1e-6:
-            # The simulated segment is a whole number of natural cycles, so
-            # wrapping here lands exactly back on frame zero's own pose:
-            # nothing to see, which is the point.
             t = t % result.period
         elif t > result.duration:
             if self.model.motion.repeat:
-                # Nothing here closes seamlessly, but repeat was asked for
-                # anyway: restart from the top rather than freezing at the
-                # end. The jump is real -- there is no pose in common to
-                # hide it behind -- which is exactly what makes this
-                # different from the ordinary period-based loop above.
                 t = 0.0
             else:
-                # Finish the run and hold there, rather than snapping back
-                # to a pose the mechanism never actually returns to on its
-                # own.
                 t = result.duration
                 self.playing = False
                 self._motion_timer.stop()
@@ -1784,7 +1947,6 @@ class MotionController:
             pass
 
     def motion_rows(self):
-        """Motion results for the on-page table, in the same shape as statics."""
         rows = []
         result = self.motion_result
         if not (result and result.ok):

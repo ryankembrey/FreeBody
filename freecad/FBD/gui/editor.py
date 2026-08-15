@@ -562,6 +562,14 @@ class Editor(QtWidgets.QWidget, MotionController):
         if self._popup is not None:
             self.close_popup()
             return True
+        motion_overlay = getattr(self, "motion_overlay", None)
+        if motion_overlay is not None and motion_overlay.hit_test(scene_pos):
+            # The playback controls sit right on top of the structure --
+            # its own bounding box is what positions them -- so a click
+            # there must never be mistaken for grabbing the nearest joint.
+            # Leave it alone and let Qt's own event delivery hand the
+            # click to the overlay itself.
+            return False
         snapped = self.snap(scene_pos) if self.tool.snaps_to_grid else scene_pos
         model_pos = I.to_model(snapped, scale=self.global_scale)
         if self.tool.click(snapped, model_pos):
@@ -599,6 +607,18 @@ class Editor(QtWidgets.QWidget, MotionController):
         return False
 
     def handle_move(self, scene_pos):
+        motion_overlay = getattr(self, "motion_overlay", None)
+        if (
+            not self._dragging_nodes
+            and not getattr(self, "_resizing_component", None)
+            and motion_overlay is not None
+            and motion_overlay.hit_test(scene_pos)
+        ):
+            # Hovering the playback controls: leave the cursor and any
+            # node/member highlighting to the overlay itself, the same
+            # reason handle_click() steps aside for it too. An already
+            # in-progress drag or resize is never interrupted by this.
+            return
         if getattr(self, "_resizing_component", None):
             self._update_component_resize(scene_pos)
             self.view.setCursor(QtCore.Qt.CursorShape.SizeFDiagCursor)

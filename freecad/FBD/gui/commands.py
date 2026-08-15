@@ -694,7 +694,6 @@ def _set_checked(name, checked, enabled=None):
 def sync_hud_actions():
     """Mirror the editor's current run/display state onto the toolbar:
     Solve and Run Motion light up while their result is on screen, the
-    embedded Play button and scrubber track the motion clock, and the
     plain display toggles match what's actually showing.
     """
     if not App.GuiUp:
@@ -731,86 +730,6 @@ def sync_hud_actions():
     _set_checked("FBD_ToggleSheet",
                 bool(getattr(editor, "show_sheet", True)) if editor is not None else True)
 
-    widget = _MOTION_WIDGET
-    if widget["play_btn"] is not None:
-        widget["play_btn"].blockSignals(True)
-        widget["play_btn"].setChecked(bool(editor is not None and getattr(editor, "playing", False)))
-        widget["play_btn"].setEnabled(has_mot)
-        widget["play_btn"].blockSignals(False)
-    if widget["slider"] is not None:
-        widget["slider"].setEnabled(has_mot)
-        if has_mot and editor is not None:
-            widget["slider"].blockSignals(True)
-            widget["slider"].setValue(
-                int(1000 * getattr(editor, "motion_time", 0.0) / max(1e-6, mot_res.duration if mot_res else 1.0))
-            )
-            widget["slider"].blockSignals(False)
-    if widget["label"] is not None:
-        t = getattr(editor, "motion_time", 0.0) if editor is not None else 0.0
-        widget["label"].setText(f"{t:.1f}s")
-
-
-def _on_play_clicked(checked):
-    del checked
-    editor = active_editor()
-    if editor is not None:
-        editor.toggle_play()
-    sync_hud_actions()
-
-
-def _on_slider_moved(value):
-    editor = active_editor()
-    if editor is None:
-        return
-    result = getattr(editor, "motion_result", None)
-    if result and getattr(result, "frames", None):
-        editor.set_motion_time(result.duration * value / 1000.0)
-
-
-def ensure_motion_widget():
-    """Embed Play plus the time scrubber into the FBD toolbar -- the one
-    piece of the old floating panel that doesn't fit a row of plain icon
-    buttons. Idempotent: does nothing once it's already there.
-    """
-    if not App.GuiUp or _MOTION_WIDGET["slider"] is not None:
-        return
-    mw = Gui.getMainWindow()
-    toolbar = None
-    for tb in mw.findChildren(QtWidgets.QToolBar):
-        if tb.windowTitle() == "FBD":
-            toolbar = tb
-            break
-    if toolbar is None:
-        return
-
-    container = QtWidgets.QWidget()
-    layout = QtWidgets.QHBoxLayout(container)
-    layout.setContentsMargins(6, 0, 4, 0)
-    layout.setSpacing(4)
-
-    play_btn = QtWidgets.QToolButton()
-    play_btn.setCheckable(True)
-    play_btn.setIcon(QtGui.QIcon(icon_path("tool_motion_play.svg")))
-    play_btn.setToolTip("Play or pause the current motion run.")
-    play_btn.setEnabled(False)
-    play_btn.clicked.connect(_on_play_clicked)
-    layout.addWidget(play_btn)
-
-    slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
-    slider.setMinimumWidth(120)
-    slider.setMaximumWidth(220)
-    slider.setRange(0, 1000)
-    slider.setEnabled(False)
-    slider.setToolTip("Scrub through the motion run.")
-    slider.valueChanged.connect(_on_slider_moved)
-    layout.addWidget(slider)
-
-    label = QtWidgets.QLabel("0.0s")
-    label.setMinimumWidth(38)
-    layout.addWidget(label)
-
-    toolbar.addWidget(container)
-    _MOTION_WIDGET.update(toolbar=toolbar, play_btn=play_btn, slider=slider, label=label)
 
 
 def register():

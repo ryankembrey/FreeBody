@@ -22,18 +22,29 @@ class FBDWorkbench(Gui.Workbench):
         # Pivot lives here, not with Motor/Actuator: it constrains a point,
         # the same job as every other support, just at a point on a member
         # rather than at a joint.
-        self.supports = ["FBD_ToolPin", "FBD_ToolRoller", "FBD_ToolFixed",
-                         "FBD_ToolSpring", "FBD_ToolPivot"]
+        self.supports = [
+            "FBD_ToolPin",
+            "FBD_ToolRoller",
+            "FBD_ToolFixed",
+            "FBD_ToolSpring",
+            "FBD_ToolPivot",
+        ]
         self.loads = ["FBD_ToolForce", "FBD_ToolMoment", "FBD_ToolLineLoad"]
         self.mechanism = ["FBD_ToolMotor", "FBD_ToolActuator", "FBD_RunMotion"]
         self.analysis = ["FBD_Solve"]
         self.diagrams = [
-            "FBD_DiagramAxial", "FBD_DiagramShear",
-            "FBD_DiagramMoment", "FBD_DiagramDeflection",
+            "FBD_DiagramAxial",
+            "FBD_DiagramShear",
+            "FBD_DiagramMoment",
+            "FBD_DiagramDeflection",
         ]
         self.display = [
-            "FBD_ToggleLabels", "FBD_ToggleComponents", "FBD_ToggleReactions",
-            "FBD_ToggleSchedule", "FBD_ToggleGraph", "FBD_ToggleResultsTable",
+            "FBD_ToggleLabels",
+            "FBD_ToggleComponents",
+            "FBD_ToggleReactions",
+            "FBD_ToggleSchedule",
+            "FBD_ToggleGraph",
+            "FBD_ToggleResultsTable",
             "FBD_ToggleSheet",
         ]
         self.view = ["FBD_ToggleSnap", "FBD_FitView"]
@@ -43,8 +54,16 @@ class FBDWorkbench(Gui.Workbench):
         # animate it, solve it, then adjust the view or ship it out.
         self.appendToolbar(
             "FBD",
-            self.document + self.draw + self.supports + self.loads + self.mechanism
-            + self.analysis + self.diagrams + self.display + self.view + self.output,
+            self.document
+            + self.draw
+            + self.supports
+            + self.loads
+            + self.mechanism
+            + self.analysis
+            + self.diagrams
+            + self.display
+            + self.view
+            + self.output,
         )
 
         self.appendMenu("FBD", self.document + self.output)
@@ -71,18 +90,21 @@ class FBDWorkbench(Gui.Workbench):
         """
         from PySide6 import QtCore
         from .gui.commands import (
-            sync_tool_actions, sync_diagram_actions, sync_hud_actions, ensure_motion_widget,
+            sync_tool_actions,
+            sync_diagram_actions,
+            sync_hud_actions,
+            
         )
         from .gui.editor_host import active_editor
 
         def sync():
-            ensure_motion_widget()
+            ()
             editor = active_editor()
             sync_tool_actions(editor.current_tool_name() if editor else None)
             sync_diagram_actions()
             sync_hud_actions()
 
-        QtCore.QTimer.singleShot(0, sync)
+        QtCore.QTimer.singleShot(220, sync)
 
     def Deactivated(self):
         pass
