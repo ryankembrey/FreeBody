@@ -1033,12 +1033,12 @@ def draw_moment_arrow(painter, center, radius, ccw, color):
     painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
     rect = QtCore.QRectF(center.x() - radius, center.y() - radius, 2 * radius, 2 * radius)
     start = 40 * 16
-    span = (-260 * 16) if ccw else (260 * 16)
+    span = (260 * 16) if ccw else (-260 * 16)
     painter.drawArc(rect, start, span)
-    end_deg = math.radians(-(40 + (-260 if ccw else 260)))
+    end_deg = math.radians(-(40 + (260 if ccw else -260)))
     hx = center.x() + radius * math.cos(end_deg)
     hy = center.y() + radius * math.sin(end_deg)
-    tangent = end_deg + (math.pi / 2 if ccw else -math.pi / 2)
+    tangent = end_deg + (-math.pi / 2 if ccw else math.pi / 2)
     path = QtGui.QPainterPath()
     _arrow_head(path, QtCore.QPointF(hx, hy), math.cos(tangent), math.sin(tangent), radius * 0.5)
     painter.setBrush(color)
@@ -1326,11 +1326,12 @@ def draw_moment_arrow_scene(painter, canvas, center, radius, ccw, color):
     painter.setPen(pen)
     painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
     rect = QtCore.QRectF(center.x() - radius, center.y() - radius, 2 * radius, 2 * radius)
-    painter.drawArc(rect, 40 * 16, (-260 * 16) if ccw else (260 * 16))
-    end_deg = math.radians(-(40 + (-260 if ccw else 260)))
+    span = (260 * 16) if ccw else (-260 * 16)
+    painter.drawArc(rect, 40 * 16, span)
+    end_deg = math.radians(-(40 + (260 if ccw else -260)))
     hx = center.x() + radius * math.cos(end_deg)
     hy = center.y() + radius * math.sin(end_deg)
-    tangent = end_deg + (math.pi / 2 if ccw else -math.pi / 2)
+    tangent = end_deg + (-math.pi / 2 if ccw else math.pi / 2)
     path = QtGui.QPainterPath()
     _arrow_head(path, QtCore.QPointF(hx, hy), math.cos(tangent), math.sin(tangent), radius * 0.45)
     painter.setBrush(color)
@@ -2070,3 +2071,130 @@ class DiagramResizeOverlay(QtWidgets.QGraphicsItem):
             event.accept()
             return
         super().mouseReleaseEvent(event)
+
+
+class DeflectionOverlay(QtWidgets.QGraphicsItem):
+    """Draws the elastically deflected shape of the structure."""
+    def __init__(self, canvas):
+        super().__init__()
+        self.canvas = canvas
+        self.setZValue(44)
+        self.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
+
+    def sc(self):
+        sheet = getattr(getattr(self.canvas, "model", None), "sheet", None)
+        return getattr(sheet, "unit_scale", 1.0) or 1.0
+
+    def boundingRect(self):
+        return _overlay_bounds(self.canvas)
+
+    def paint(self, painter, option, widget=None):
+        if not getattr(self.canvas, "show_deflection", False):
+            return
+        res = getattr(self.canvas, "display_result", None)
+        if not res or not res.ok or not getattr(res, "displacements", None):
+            return
+
+        model = self.canvas.model
+        sc = self.sc()
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        
+        max_disp = 0.0
+        max_node = None
+        for nid, (ux, uy, rz) in res.displacements.items():
+            disp = math.hypot(ux, uy)
+            if disp > max_disp:
+                max_disp = disp
+                max_node = nid
+
+        if max_disp < 1e-9:
+            return
+            
+        target_px = 25.0 * sc
+        scale_factor = target_px / max_disp
+        
+        pen = QtGui.QPen(QtGui.QColor("#d81b60"), 1.5, QtCore.Qt.PenStyle.DashLine)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+
+        for member in model.members.values():
+            a = model.nodes.get(member.start)
+            b = model.nodes.get(member.end)
+            if not a or not b:
+                continue
+                
+            disp_a = res.displacements.get(a.id, (0, 0, 0))
+            disp_b = res.displacements.get(b.id, (0, 0, 0))
+            
+            p_ax = a.x + disp_a[0] * scale_factor
+            p_ay = a.y + disp_a[1] * scale_factor
+            p_bx = b.x + disp_b[0] * scale_factor
+            p_by = b.y + disp_b[1] * scale_factor
+            
+            orig_dx = b.x - a.x
+            orig_dy = b.y - a.y
+            L_orig = math.hypot(orig_dx, orig_dy)
+            
+            if L_orig > 1e-9:
+                ux = orig_dx / L_orig
+                uy = orig_dy / L_orig
+                nx = -uy
+                ny = ux
+                
+                # Transform global displacements to the local member frame
+                uA = disp_a[0]*ux + disp_a[1]*uy
+                vA = disp_a[0]*nx + disp_a[1]*ny
+                
+                # AnaStruct uses CW positive for rotations, Hermite math needs CCW positive
+                thetaA = -disp_a[2]
+                
+                uB = disp_b[0]*ux + disp_b[1]*uy
+                vB = disp_b[0]*nx + disp_b[1]*ny
+                thetaB = -disp_b[2]
+                
+                poly = []
+                steps = 12
+                for i in range(steps + 1):
+                    t = i / float(steps)
+                    
+                    # Standard Cubic Hermite Shape Functions
+                    h00 = 2*t**3 - 3*t**2 + 1
+                    h10 = t**3 - 2*t**2 + t
+                    h01 = -2*t**3 + 3*t**2
+                    h11 = t**3 - t**2
+                    
+                    # Evaluate exact transverse deflection at t
+                    v_t = h00 * (vA * scale_factor) + h10 * (thetaA * scale_factor * L_orig) + \
+                          h01 * (vB * scale_factor) + h11 * (thetaB * scale_factor * L_orig)
+                          
+                    # Linear axial displacement at t
+                    u_t = (1-t) * (uA * scale_factor) + t * (uB * scale_factor)
+                    
+                    # Transform back to Global Model Coordinates
+                    x_local = t * L_orig + u_t
+                    y_local = v_t
+                    
+                    x_glob = a.x + x_local * ux + y_local * nx
+                    y_glob = a.y + x_local * uy + y_local * ny
+                    
+                    poly.append(to_scene(x_glob, y_glob, sc))
+                    
+                path = QtGui.QPainterPath(poly[0])
+                for pt in poly[1:]:
+                    path.lineTo(pt)
+                painter.drawPath(path)
+            else:
+                pa = to_scene(p_ax, p_ay, sc)
+                pb = to_scene(p_bx, p_by, sc)
+                painter.drawLine(pa, pb)
+
+        if max_node is not None:
+            n = model.nodes.get(max_node)
+            if n:
+                disp_vals = res.displacements[max_node]
+                p_max_x = n.x + disp_vals[0] * scale_factor
+                p_max_y = n.y + disp_vals[1] * scale_factor
+                pt = to_scene(p_max_x, p_max_y, sc)
+                text = f"Max Deflection: {fmt(max_disp, 'mm')}"
+                px_text(painter, self.canvas, pt, text, QtGui.QColor("#d81b60"), size_pt=11.0, dy=-12.0)

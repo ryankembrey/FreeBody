@@ -168,8 +168,8 @@ class DisplayHUD(QtWidgets.QFrame):
         self.btn_rxn = make_btn("Reactions", "Toggle Reactions", editor.toggle_reactions)
         self.btn_tbl = make_btn("Table", "Toggle Results Table", editor.toggle_results_table)
         self.btn_comp = make_btn(
-            "Components", "Show forces as separate X and Y arrows",
-            editor.toggle_components)
+            "Components", "Show forces as separate X and Y arrows", editor.toggle_components
+        )
 
         sep1 = QtWidgets.QFrame()
         sep1.setObjectName("separator")
@@ -178,6 +178,7 @@ class DisplayHUD(QtWidgets.QFrame):
         self.btn_ax = make_btn("Axial", "Axial Force Diagram", editor.toggle_axial)
         self.btn_sh = make_btn("Shear", "Shear Force Diagram", editor.toggle_shear)
         self.btn_mo = make_btn("Moment", "Bending Moment Diagram", editor.toggle_moment)
+        self.btn_defl = make_btn("Deflect", "Deflected Shape", editor.toggle_deflection)
         self.btn_ov = make_btn(
             "Overlay", "Overlay Diagrams on Structure", editor.toggle_diagrams_overlay
         )
@@ -205,6 +206,7 @@ class DisplayHUD(QtWidgets.QFrame):
             (self.btn_ax, self.editor.show_axial, has_res),
             (self.btn_sh, self.editor.show_shear, has_bending),
             (self.btn_mo, self.editor.show_moment, has_bending),
+            (self.btn_defl, getattr(self.editor, "show_deflection", False), has_res),
             (
                 self.btn_ov,
                 self.editor.diagrams_overlay,
@@ -255,6 +257,7 @@ class Editor(QtWidgets.QWidget, MotionController):
         self.show_moment = False
         self.show_shear = False
         self.show_axial = False
+        self.show_deflection = False
         self.diagrams_overlay = False
         self.infinite_canvas = True
         self.show_sheet = True
@@ -263,7 +266,7 @@ class Editor(QtWidgets.QWidget, MotionController):
         self.diagram_activation_order = []
         self.results_table_pos = None
         self.results_table_scale = 1.0
-        self.show_components = False   # forces as separate X/Y arrows, not one angled arrow
+        self.show_components = False  # forces as separate X/Y arrows, not one angled arrow
         self.observers = []  # callables notified when anything changes
         self.snap_enabled = True
         self.default_force = 1000.0  # N
@@ -286,6 +289,8 @@ class Editor(QtWidgets.QWidget, MotionController):
 
         self.result_overlay = I.ResultOverlay(self)
         self.scene.addItem(self.result_overlay)
+        self.deflection_overlay = I.DeflectionOverlay(self)
+        self.scene.addItem(self.deflection_overlay)
         self.results_overlay = I.ResultsTableOverlay(self)
         self.scene.addItem(self.results_overlay)
 
@@ -488,8 +493,11 @@ class Editor(QtWidgets.QWidget, MotionController):
         # that never touched it, but every sketch import now sets a real
         # scale, and the box would land far from wherever the structure
         # actually is: invisible in practice, not merely misplaced.
-        pts = [I.to_scene(self.model.nodes[n].x, self.model.nodes[n].y, self.global_scale)
-               for n in comp_nodes if n in self.model.nodes]
+        pts = [
+            I.to_scene(self.model.nodes[n].x, self.model.nodes[n].y, self.global_scale)
+            for n in comp_nodes
+            if n in self.model.nodes
+        ]
         if not pts:
             return QtCore.QRectF()
         xs = [p.x() for p in pts]
@@ -568,8 +576,11 @@ class Editor(QtWidgets.QWidget, MotionController):
         than the whole page's display scale.
         """
         del rect, start_model_pos
-        nodes = {n: (self.model.nodes[n].x, self.model.nodes[n].y)
-                 for n in comp_nodes if n in self.model.nodes}
+        nodes = {
+            n: (self.model.nodes[n].x, self.model.nodes[n].y)
+            for n in comp_nodes
+            if n in self.model.nodes
+        }
         if not nodes:
             return
         xs = [xy[0] for xy in nodes.values()]
@@ -635,8 +646,10 @@ class Editor(QtWidgets.QWidget, MotionController):
             b = self.model.nodes.get(member.end)
             if not a or not b:
                 continue
-            pa, pb = (I.to_scene(a.x, a.y, self.global_scale),
-                      I.to_scene(b.x, b.y, self.global_scale))
+            pa, pb = (
+                I.to_scene(a.x, a.y, self.global_scale),
+                I.to_scene(b.x, b.y, self.global_scale),
+            )
             d = _point_segment_distance(scene_pos, pa, pb)
             if d < best_d:
                 best, best_d = member.id, d
@@ -665,8 +678,7 @@ class Editor(QtWidgets.QWidget, MotionController):
         b = self.model.nodes.get(member.end)
         if not a or not b:
             return 0.5
-        pa, pb = (I.to_scene(a.x, a.y, self.global_scale),
-                  I.to_scene(b.x, b.y, self.global_scale))
+        pa, pb = (I.to_scene(a.x, a.y, self.global_scale), I.to_scene(b.x, b.y, self.global_scale))
         dx, dy = pb.x() - pa.x(), pb.y() - pa.y()
         length_sq = dx * dx + dy * dy
         if length_sq < 1e-12:
@@ -741,16 +753,21 @@ class Editor(QtWidgets.QWidget, MotionController):
             except RuntimeError:
                 pass
 
-        print("DEBUG tool=", self.tool.name, "comp=", bool(comp), "rect=", rect,
-              "corner=", bool(comp and rect and self._is_near_box_corner(scene_pos, rect)))
+        # print("DEBUG tool=", self.tool.name, "comp=", bool(comp), "rect=", rect,
+        #       "corner=", bool(comp and rect and self._is_near_box_corner(scene_pos, rect)))
         # Three states, so hovering always previews what a click-drag would
         # actually do here: resize at the corner, move at the edge or on a
         # joint of its own, arrow otherwise.
-        if self.tool.name == "Select" and comp and rect \
-                and self._is_near_box_corner(scene_pos, rect):
+        if (
+            self.tool.name == "Select"
+            and comp
+            and rect
+            and self._is_near_box_corner(scene_pos, rect)
+        ):
             self.view.setCursor(QtCore.Qt.CursorShape.SizeFDiagCursor)
-        elif self.tool.name == "Select" and comp and rect \
-                and self._is_near_box_edge(scene_pos, rect):
+        elif (
+            self.tool.name == "Select" and comp and rect and self._is_near_box_edge(scene_pos, rect)
+        ):
             # Open hand means grabbable, closed means held, as everywhere else.
             self.view.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
         elif self._dragging_nodes:
@@ -905,8 +922,7 @@ class Editor(QtWidgets.QWidget, MotionController):
         # serializes to one blob. FreeCAD's document undo does not reach into
         # it, so the shortcuts have to be handled here or Ctrl+Z silently
         # undoes something else entirely.
-        control = bool(modifiers) and bool(
-            modifiers & QtCore.Qt.KeyboardModifier.ControlModifier)
+        control = bool(modifiers) and bool(modifiers & QtCore.Qt.KeyboardModifier.ControlModifier)
         if control:
             shift = bool(modifiers & QtCore.Qt.KeyboardModifier.ShiftModifier)
             if key == QtCore.Qt.Key.Key_Z and not shift:
@@ -1035,6 +1051,9 @@ class Editor(QtWidgets.QWidget, MotionController):
         try:
             self.result_overlay.prepareGeometryChange()
             self.result_overlay.update()
+            if hasattr(self, "deflection_overlay"):
+                self.deflection_overlay.prepareGeometryChange()
+                self.deflection_overlay.update()
         except RuntimeError:
             pass
 
@@ -1384,6 +1403,10 @@ class Editor(QtWidgets.QWidget, MotionController):
             self.diagram_offsets["axial"] = None
         self.refresh_geometry()
 
+    def toggle_deflection(self):
+        self.show_deflection = not getattr(self, "show_deflection", False)
+        self.refresh_geometry()
+
     def toggle_diagrams_overlay(self):
         self.diagrams_overlay = not self.diagrams_overlay
         self.refresh_geometry()
@@ -1403,6 +1426,22 @@ class Editor(QtWidgets.QWidget, MotionController):
         menu = QtWidgets.QMenu(self)
 
         menu.addAction("Export PDF...").triggered.connect(self.export_pdf_prompt)
+        
+        view_pos = self.view.mapFromGlobal(global_pos)
+        scene_pos = self.view.mapToScene(view_pos)
+        item = self.item_at(scene_pos)
+        
+        ident = None
+        if item and item.kind == 'member':
+            ident = item.ident
+        else:
+            kind, sel_ident = self.selected_entity()
+            if kind == 'member':
+                ident = sel_ident
+                
+        if ident is not None:
+            menu.addAction('Isolate Member (FBD)').triggered.connect(lambda _, i=ident: self.isolate_member(i))
+            
         menu.addSeparator()
 
         lbl_act = menu.addAction("Show Joint Labels")
@@ -1445,6 +1484,83 @@ class Editor(QtWidgets.QWidget, MotionController):
         act.triggered.connect(self.toggle_diagrams_overlay)
 
         menu.exec(global_pos)
+
+    def isolate_member(self, ident):
+        res = self.result
+        if not res or not res.ok:
+            self.set_prompt("Solve the diagram first to isolate with internal forces.")
+            return
+
+        mf = res.members.get(ident)
+        member = self.model.members.get(ident)
+        if not mf or not member:
+            return
+
+        a = self.model.nodes.get(member.start)
+        b = self.model.nodes.get(member.end)
+
+        from freecad.FBD.engine.model import Model
+
+        iso = Model()
+        iso.sheet.title = f"Isolated Member: {member.label}"
+
+        # Center the member in the new model relative to origin
+        cx, cy = (a.x + b.x) / 2.0, (a.y + b.y) / 2.0
+
+        na = iso.add_node(a.x - cx, a.y - cy, a.label)
+        nb = iso.add_node(b.x - cx, b.y - cy, b.label)
+        new_mem = iso.add_member(na.id, nb.id, EA=member.EA, EI=member.EI)
+        new_mem.label = member.label
+
+        dx, dy = b.x - a.x, b.y - a.y
+        L = math.hypot(dx, dy)
+        if L > 1e-6:
+            ux, uy = dx / L, dy / L
+            nx, ny = -uy, ux
+
+            # Extract start forces
+            N1 = mf.axial[0] if mf.axial else 0.0
+            V1 = mf.shear[0] if mf.shear else 0.0
+            M1 = mf.moment[0] if mf.moment else 0.0
+
+            # Extract end forces
+            N2 = mf.axial[-1] if mf.axial else 0.0
+            V2 = mf.shear[-1] if mf.shear else 0.0
+            M2 = mf.moment[-1] if mf.moment else 0.0
+
+            # Apply equivalent global Point/Moment Loads onto the new structure
+            fx_A = -N1 * ux + V1 * nx
+            fy_A = -N1 * uy + V1 * ny
+            if abs(fx_A) > 1e-6 or abs(fy_A) > 1e-6:
+                iso.add_point_load(na.id, fx=fx_A, fy=fy_A).label = "Cut A"
+            if abs(M1) > 1e-6:
+                iso.add_moment_load(na.id, m=-M1).label = "Cut M_A"
+
+            fx_B = N2 * ux - V2 * nx
+            fy_B = N2 * uy - V2 * ny
+            if abs(fx_B) > 1e-6 or abs(fy_B) > 1e-6:
+                iso.add_point_load(nb.id, fx=fx_B, fy=fy_B).label = "Cut B"
+            if abs(M2) > 1e-6:
+                iso.add_moment_load(nb.id, m=M2).label = "Cut M_B"
+
+        # Copy external line loads on the member
+        for ll in self.model.line_loads.values():
+            if ll.member == ident:
+                iso.add_line_load(new_mem.id, q=ll.q, direction=ll.direction)
+
+        # Open in a new editor pane
+        import FreeCAD as App
+        from freecad.FBD.gui import document as doc_mod
+        from freecad.FBD.gui.editor_host import open_editor
+
+        from freecad.FBD.gui.sketch_import import fit_to_sheet
+        fit_to_sheet(iso, size_fraction=0.6)
+        doc = App.ActiveDocument
+        if doc:
+            obj = doc_mod.create(doc, label=f"Isolated_{member.label}")
+            doc_mod.store_model(obj, iso)
+            open_editor(obj)
+            self.set_prompt(f"Isolated member {member.label} into new diagram.")
 
     def export_pdf(self, path):
         from PySide6 import QtGui, QtCore
@@ -1541,11 +1657,13 @@ class Editor(QtWidgets.QWidget, MotionController):
                     continue
                 dist = math.hypot(pos[0] - node.x, pos[1] - node.y)
                 if dist > 1e-3:
-                    rows.append((
-                        f"Moved {self.model.entity_label(nid)}",
-                        I.fmt(dist, "mm"),
-                        "from its drawn position",
-                    ))
+                    rows.append(
+                        (
+                            f"Moved {self.model.entity_label(nid)}",
+                            I.fmt(dist, "mm"),
+                            "from its drawn position",
+                        )
+                    )
             for mid in sorted(self.model.members):
                 member = self.model.members.get(mid)
                 if member is None:
@@ -1560,11 +1678,13 @@ class Editor(QtWidgets.QWidget, MotionController):
                 ang1 = math.degrees(math.atan2(b1[1] - a1[1], b1[0] - a1[0]))
                 delta = ((ang1 - ang0 + 180.0) % 360.0) - 180.0
                 if abs(delta) > 0.05:
-                    rows.append((
-                        f"Rotated {member.label}",
-                        I.fmt(delta, "deg"),
-                        "from its drawn angle",
-                    ))
+                    rows.append(
+                        (
+                            f"Rotated {member.label}",
+                            I.fmt(delta, "deg"),
+                            "from its drawn angle",
+                        )
+                    )
         return rows
 
     def selected_entity(self):

@@ -109,6 +109,15 @@ class Diagram:
     def __setstate__(self, state):
         return None
 
+    def onDocumentRestored(self, obj):
+        """Rebuild the transient Tree View hierarchy when the document is opened."""
+        try:
+            from freecad.FBD.gui.document import _sync_tree_view, load_model
+            _sync_tree_view(obj, load_model(obj))
+        except Exception as e:
+            import FreeCAD as App
+            App.Console.PrintError(f"FBD: Failed to restore tree view: {e}\n")
+
 
 class ViewProviderDiagram:
     def __init__(self, vobj=None):
