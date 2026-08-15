@@ -24,8 +24,13 @@ class PopupForm(QtWidgets.QFrame):
     its own content.
     """
 
-    LABEL_W = 84   # px: shared label-cell width, every popup lines up
-    FIELD_W = 150  # px: shared value-field width, room for "630000000 N"
+    LABEL_W = 190  # px: shared label-cell width, every popup lines up.
+    FIELD_W = 190  # px: shared value-field width. Equal 1:1 columns; the
+    # value column's own width is set by the widest thing that actually
+    # has to fit in it -- the rendered width of "Compression only
+    # (strut)" as a real QComboBox, padding and arrow included, measures
+    # 178px, so 190px leaves it a little room rather than sitting right
+    # at the edge.
 
     def __init__(self):
         super().__init__()
@@ -37,7 +42,15 @@ class PopupForm(QtWidgets.QFrame):
             "QLabel#RowLabel {"
             "    color: #37474f; font-size: 12px; background: #eef0f3;"
             "    border-right: 1px solid #d7dbe1; padding: 3px 6px; }"
-            "QLabel#Note { color: #8a94a6; font-size: 11px; padding: 5px 8px 3px 8px; }"
+            "QLabel#Note {"
+            "    color: #5b6270; font-size: 11px; padding: 6px 8px;"
+            "    background: #f4f6f8; border: 1px solid #e3e6ea;"
+            "    border-radius: 4px; margin-top: 4px; }"
+            "QLabel#Section {"
+            "    color: #37474f; font-size: 10.5px; font-weight: bold;"
+            "    letter-spacing: 0.6px;"
+            "    padding: 8px 6px 3px 6px; border-top: 1px solid #e3e6ea;"
+            "    margin-top: 3px; }"
             "QDoubleSpinBox, QComboBox, QLineEdit {"
             "    font-size: 12px; min-height: 20px; padding: 1px 4px; }"
             "QLineEdit:read-only { background: #f1f2f4; color: #5b6270; }"
@@ -112,11 +125,25 @@ class PopupForm(QtWidgets.QFrame):
         self._form.addRow(self._row_label(label), edit)
         return edit
 
+    def add_section(self, title):
+        """A small heading row, so a long form reads as a few labelled
+        groups instead of one flat column of undifferentiated rows."""
+        lbl = QtWidgets.QLabel(title.upper())
+        lbl.setObjectName("Section")
+        self._form.addRow(lbl)
+        return lbl
+
     def add_note(self, text):
         note = QtWidgets.QLabel(text)
         note.setObjectName("Note")
         note.setWordWrap(True)
-        note.setMaximumWidth(self.LABEL_W + self.FIELD_W)
+        # Expanding, not a max-width cap: a cap sizes to content and can
+        # leave the note narrower than the row it's in, which is why the
+        # box looked like it stopped short of the right edge. Growing to
+        # fill the row is what actually makes it span the full width.
+        note.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Preferred
+        )
         self._form.addRow(note)
         return note
 

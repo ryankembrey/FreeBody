@@ -374,6 +374,7 @@ class MemberItem(_Item):
             "Name", member.label, lambda v: self.canvas.edit(lambda: setattr(member, "label", v))
         )
         form.add_readonly("Length", f"{model.member_length(member):,.1f} mm")
+        form.add_section("Stiffness")
         form.add_spin(
             "EA",
             member.EA,
@@ -390,14 +391,15 @@ class MemberItem(_Item):
             decimals=0,
             suffix="N.mm2",
         )
+        form.add_section("Behaviour")
         form.add_combo(
-            "Behaviour",
+            "Type",
             [(k, M.BEHAVIOUR_LABELS[k]) for k in M.BEHAVIOURS],
             member.behaviour,
             lambda v: self.canvas.edit(lambda: setattr(member, "behaviour", v)),
-            tooltip="A cable cannot push; a strut cannot pull.",
+            tooltip="Normal carries both; a cable cannot push, a strut cannot pull.",
         )
-        for label, attr in (("Hinge at start", "release_start"), ("Hinge at end", "release_end")):
+        for label, attr in (("Start hinge", "release_start"), ("End hinge", "release_end")):
             form.add_combo(
                 label,
                 [(0, "Rigid"), (1, "Hinged")],
@@ -415,6 +417,7 @@ class MemberItem(_Item):
             suffix="N.mm",
             tooltip="Plastic moment capacity. 0 stays elastic.",
         )
+        form.add_section("Physical")
         form.add_spin(
             "Self weight",
             member.g,

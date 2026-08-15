@@ -882,6 +882,25 @@ class Editor(QtWidgets.QWidget, MotionController):
         return True
 
     def handle_key(self, key, modifiers=None):
+        # Escape always works, popup or not: it is how a popup closes.
+        if key == QtCore.Qt.Key.Key_Escape:
+            if self._popup is not None:
+                self.close_popup()
+                return True
+            self.tool.cancel()
+            if self.tool is not self.tools[0]:
+                self.set_tool(self.tools[0])
+            return True
+
+        if self._popup is not None:
+            # An on-page form is open and almost certainly has real Qt
+            # focus in one of its own fields right now: Backspace, Delete,
+            # Ctrl+Z and every canvas shortcut below belong to whatever is
+            # being typed there, not to the diagram underneath it. Handing
+            # nothing here back lets Qt's own focus routing deliver the
+            # key to the field the way it would anywhere else.
+            return False
+
         # The diagram keeps its own snapshot stack, because the whole model
         # serializes to one blob. FreeCAD's document undo does not reach into
         # it, so the shortcuts have to be handled here or Ctrl+Z silently
@@ -896,14 +915,6 @@ class Editor(QtWidgets.QWidget, MotionController):
             if key == QtCore.Qt.Key.Key_Y or (key == QtCore.Qt.Key.Key_Z and shift):
                 self.redo()
                 return True
-        if key == QtCore.Qt.Key.Key_Escape:
-            if self._popup is not None:
-                self.close_popup()
-                return True
-            self.tool.cancel()
-            if self.tool is not self.tools[0]:
-                self.set_tool(self.tools[0])
-            return True
         if key in (QtCore.Qt.Key.Key_Delete, QtCore.Qt.Key.Key_Backspace):
             self.delete_selection()
             return True

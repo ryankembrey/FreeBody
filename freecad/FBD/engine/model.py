@@ -77,7 +77,7 @@ COMPRESSION_ONLY = "compression"  # a strut or a bearing contact: cannot pull
 
 BEHAVIOURS = [BOTH, TENSION_ONLY, COMPRESSION_ONLY]
 BEHAVIOUR_LABELS = {
-    BOTH: "Normal (tension and compression)",
+    BOTH: "Normal",
     TENSION_ONLY: "Tension only (cable)",
     COMPRESSION_ONLY: "Compression only (strut)",
 }
