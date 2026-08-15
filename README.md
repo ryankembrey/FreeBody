@@ -1,4 +1,4 @@
-# FBD workbench
+# Free Body Workbench
 
 Free Body is a workbench for FreeCAD that enables creation of free body diagrams (FBDs).
 
