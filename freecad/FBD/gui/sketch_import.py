@@ -129,7 +129,7 @@ def read_sketch(sketch) -> Tuple[List[tuple], List[tuple], set]:
 
     segments are (geo_index, (x1, y1), (x2, y2)); points are (geo_index, (x, y)).
     """
-    import Part
+    import Part  # type: ignore
 
     geometry = getattr(sketch, "Geometry", None)
     if geometry is None:
@@ -173,16 +173,17 @@ def sketch_fingerprint(sketch):
         r = round(float(v), ndigits)
         return 0.0 if r == 0.0 else r
 
-    return repr((
-        sorted((i, clean(a[0]), clean(a[1]), clean(b[0]), clean(b[1]))
-              for i, a, b in segments),
-        sorted((i, clean(p[0]), clean(p[1])) for i, p in points),
-    ))
+    return repr(
+        (
+            sorted((i, clean(a[0]), clean(a[1]), clean(b[0]), clean(b[1])) for i, a, b in segments),
+            sorted((i, clean(p[0]), clean(p[1])) for i, p in points),
+        )
+    )
 
 
 def _warn(message):
     try:
-        import FreeCAD as App
+        import FreeCAD as App  # type: ignore
 
         App.Console.PrintWarning("FBD: " + message + "\n")
     except Exception:

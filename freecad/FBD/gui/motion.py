@@ -81,6 +81,7 @@ class MotorItem(_Item):
         return p
 
     def paint(self, painter, option, widget=None):
+        _ = (option, widget)
         mo = self.motor()
         if not mo:
             return
@@ -129,7 +130,8 @@ class MotorItem(_Item):
             width = QtGui.QFontMetricsF(S.font(12.0)).horizontalAdvance(text)
             painter.drawText(QtCore.QPointF(-width / 2, -r - 8.0), text)
 
-    def open_editor(self, scene_pos):
+    def open_editor(self, _scene_pos):
+        _ = _scene_pos
         mo = self.motor()
         if mo is None:
             return
@@ -165,17 +167,22 @@ class MotorItem(_Item):
             "Starts at",
             mo.schedule.start,
             lambda v: self.canvas.edit(lambda: setattr(mo.schedule, "start", max(0.0, v))),
-            lo=0.0, decimals=2, suffix="s",
+            lo=0.0,
+            decimals=2,
+            suffix="s",
             tooltip="Seconds into the run before this motor starts turning.",
         )
         form.add_spin(
             "Runs for",
             mo.schedule.duration if mo.schedule.duration is not None else 0.0,
             lambda v: self.canvas.edit(
-                lambda: setattr(mo.schedule, "duration", v if v > 0 else None)),
-            lo=0.0, decimals=2, suffix="s",
+                lambda: setattr(mo.schedule, "duration", v if v > 0 else None)
+            ),
+            lo=0.0,
+            decimals=2,
+            suffix="s",
             tooltip="How long it runs once started. 0 means it keeps running "
-                    "for the rest of the animation.",
+            "for the rest of the animation.",
         )
         member = self.model.members.get(mo.member)
         if member:
@@ -236,6 +243,7 @@ class ActuatorItem(_Item):
         return stroker.createStroke(p)
 
     def paint(self, painter, option, widget=None):
+        _ = (option, widget)
         pair = self.ends()
         if not pair:
             return
@@ -319,7 +327,8 @@ class ActuatorItem(_Item):
         way = "push" if force > 0 else "pull"
         return f"{fmt(abs(force), 'N')} {way}", self.ink(FORCE)
 
-    def open_editor(self, scene_pos):
+    def open_editor(self, _scene_pos):
+        _ = _scene_pos
         ac = self.actuator()
         if ac is None:
             return
@@ -357,17 +366,22 @@ class ActuatorItem(_Item):
             "Starts at",
             ac.schedule.start,
             lambda v: self.canvas.edit(lambda: setattr(ac.schedule, "start", max(0.0, v))),
-            lo=0.0, decimals=2, suffix="s",
+            lo=0.0,
+            decimals=2,
+            suffix="s",
             tooltip="Seconds into the run before this ram starts moving.",
         )
         form.add_spin(
             "Runs for",
             ac.schedule.duration if ac.schedule.duration is not None else 0.0,
             lambda v: self.canvas.edit(
-                lambda: setattr(ac.schedule, "duration", v if v > 0 else None)),
-            lo=0.0, decimals=2, suffix="s",
+                lambda: setattr(ac.schedule, "duration", v if v > 0 else None)
+            ),
+            lo=0.0,
+            decimals=2,
+            suffix="s",
             tooltip="How long it runs once started. 0 means it keeps running "
-                    "for the rest of the animation.",
+            "for the rest of the animation.",
         )
         member = self.model.members.get(ac.member)
         if member:
@@ -407,19 +421,26 @@ class ActuatorItem(_Item):
         if members:
             angle_state = {"member": members[0].id, "deg": 0.0}
             form.add_combo(
-                "Member", [(m.id, m.label) for m in members], angle_state["member"],
+                "Member",
+                [(m.id, m.label) for m in members],
+                angle_state["member"],
                 lambda v: angle_state.__setitem__("member", v),
             )
             form.add_spin(
-                "To angle", 0.0,
+                "To angle",
+                0.0,
                 lambda v: angle_state.__setitem__("deg", v),
-                lo=-360, hi=360, decimals=1, suffix="deg",
+                lo=-360,
+                hi=360,
+                decimals=1,
+                suffix="deg",
                 tooltip="Measured from the positive x axis, same as everywhere else.",
             )
 
             def solve_angle():
                 stroke, ok, msg = kinematics.solve_for_member_angle(
-                    self.model, ac.id, angle_state["member"], angle_state["deg"])
+                    self.model, ac.id, angle_state["member"], angle_state["deg"]
+                )
                 if ok:
                     self.canvas.edit(lambda: setattr(ac, "stroke", stroke))
                 self.canvas.set_prompt(msg)
@@ -430,21 +451,27 @@ class ActuatorItem(_Item):
         if nodes:
             travel_state = {"node": nodes[0].id, "mm": 0.0}
             form.add_combo(
-                "Joint", [(n.id, n.label) for n in nodes], travel_state["node"],
+                "Joint",
+                [(n.id, n.label) for n in nodes],
+                travel_state["node"],
                 lambda v: travel_state.__setitem__("node", v),
             )
             form.add_spin(
-                "Travel", 0.0,
+                "Travel",
+                0.0,
                 lambda v: travel_state.__setitem__("mm", v),
-                lo=0.0, decimals=1, suffix="mm",
+                lo=0.0,
+                decimals=1,
+                suffix="mm",
                 tooltip="Distance from its drawn position, along whatever "
-                        "path it actually takes -- not a straight-line x,y "
-                        "target, since one ram is one degree of freedom.",
+                "path it actually takes -- not a straight-line x,y "
+                "target, since one ram is one degree of freedom.",
             )
 
             def solve_travel():
                 stroke, ok, msg = kinematics.solve_for_joint_travel(
-                    self.model, ac.id, travel_state["node"], travel_state["mm"])
+                    self.model, ac.id, travel_state["node"], travel_state["mm"]
+                )
                 if ok:
                     self.canvas.edit(lambda: setattr(ac, "stroke", stroke))
                 self.canvas.set_prompt(msg)
@@ -457,7 +484,7 @@ class ActuatorItem(_Item):
             "target is outside what this mechanism can actually do."
         )
 
-        self.canvas.open_popup(scene_pos, form)
+        self.canvas.open_popup(_scene_pos, form)
 
 
 class MotionOverlay(QtWidgets.QGraphicsItem):
@@ -497,6 +524,7 @@ class MotionOverlay(QtWidgets.QGraphicsItem):
         ).adjusted(-60, -60, 60, 60)
 
     def paint(self, painter, option, widget=None):
+        _ = (option, widget)
         result = getattr(self.canvas, "motion_result", None)
         if not result or not result.ok or not result.frames:
             return
@@ -569,7 +597,7 @@ class MotionOverlay(QtWidgets.QGraphicsItem):
         radius = self.canvas.px(3.4)
         painter.setBrush(colour)
         painter.setPen(QtCore.Qt.PenStyle.NoPen)
-        for nid, pos in frame.positions.items():
+        for _, pos in frame.positions.items():
             painter.drawEllipse(to_scene(pos[0], pos[1], sc), radius, radius)
 
 
@@ -704,6 +732,7 @@ class EffortGraphOverlay(QtWidgets.QGraphicsItem):
     # ---- drawing
 
     def paint(self, painter, option, widget=None):
+        _ = (option, widget)
         if not self._visible():
             return
         curves = self.canvas.motion_curves
@@ -835,10 +864,10 @@ class ScheduleOverlay(QtWidgets.QGraphicsItem):
 
     MIN_SCALE = 0.6
     MAX_SCALE = 3.0
-    HANDLE = 12.0     # pixels: panel corner resize zone
-    EDGE = 7.0        # pixels: clip edge grab zone
+    HANDLE = 12.0  # pixels: panel corner resize zone
+    EDGE = 7.0  # pixels: clip edge grab zone
     ROW_H = 20.0
-    HEADER_H = 32.0   # two rows: title + Repeat, then the time axis
+    HEADER_H = 32.0  # two rows: title + Repeat, then the time axis
     W = 300.0
 
     def __init__(self, canvas):
@@ -855,8 +884,8 @@ class ScheduleOverlay(QtWidgets.QGraphicsItem):
         self._resizing = False
         self._resize_start_screen = None
         self._resize_start_scale = 1.0
-        self._clip_drag = None       # (driver, mode): mode in "move", "left", "right"
-        self._clip_drag_ref = None   # (start0, end0, scene_x0)
+        self._clip_drag = None  # (driver, mode): mode in "move", "left", "right"
+        self._clip_drag_ref = None  # (start0, end0, scene_x0)
         if getattr(canvas, "schedule_pos", None) is not None:
             self.setPos(canvas.schedule_pos)
         else:
@@ -907,18 +936,24 @@ class ScheduleOverlay(QtWidgets.QGraphicsItem):
         w = self.W * k
         h = (self.HEADER_H + self.ROW_H * max(1, len(drivers))) * k
         label_w = 64.0 * k
-        plot = QtCore.QRectF(label_w, self.HEADER_H * k, w - label_w - 8.0 * k,
-                             h - self.HEADER_H * k - 6.0 * k)
+        plot = QtCore.QRectF(
+            label_w, self.HEADER_H * k, w - label_w - 8.0 * k, h - self.HEADER_H * k - 6.0 * k
+        )
         rows = []
         for i, (kind, driver) in enumerate(drivers):
             top = plot.top() + i * (self.ROW_H * k)
-            rows.append((kind, driver, QtCore.QRectF(plot.left(), top, plot.width(), self.ROW_H * k)))
+            rows.append(
+                (kind, driver, QtCore.QRectF(plot.left(), top, plot.width(), self.ROW_H * k))
+            )
         return w, h, label_w, plot, rows
 
     def _clip_span(self, driver, span):
         start = driver.schedule.start
-        end = start + (driver.schedule.duration if driver.schedule.duration is not None
-                       else max(0.0, span - start))
+        end = start + (
+            driver.schedule.duration
+            if driver.schedule.duration is not None
+            else max(0.0, span - start)
+        )
         return start, end
 
     def _clip_rect(self, row_rect, plot, span, driver, k):
@@ -929,7 +964,9 @@ class ScheduleOverlay(QtWidgets.QGraphicsItem):
         else:
             x0, x1 = plot.left(), plot.right()
         pad = 3.0 * k
-        return QtCore.QRectF(x0, row_rect.top() + pad, max(2.0, x1 - x0), row_rect.height() - 2 * pad)
+        return QtCore.QRectF(
+            x0, row_rect.top() + pad, max(2.0, x1 - x0), row_rect.height() - 2 * pad
+        )
 
     def _repeat_geometry(self, w, k):
         """(box_rect, label_pos, hit_rect) for the Repeat toggle, sharing
@@ -945,8 +982,9 @@ class ScheduleOverlay(QtWidgets.QGraphicsItem):
         box_x = w - margin - box
         box_rect = QtCore.QRectF(box_x, y, box, box)
         label_pos = QtCore.QPointF(box_x - gap - label_w, y + box - 2.0 * k)
-        hit_rect = QtCore.QRectF(box_x - gap - label_w - 2 * k, 0.0,
-                                 margin + box + gap + label_w + 2 * k, 18.0 * k)
+        hit_rect = QtCore.QRectF(
+            box_x - gap - label_w - 2 * k, 0.0, margin + box + gap + label_w + 2 * k, 18.0 * k
+        )
         return box_rect, label_pos, hit_rect
 
     def _near_corner(self, pos):
@@ -955,9 +993,9 @@ class ScheduleOverlay(QtWidgets.QGraphicsItem):
 
     def _hit_clip(self, pos):
         k = self.panel_scale
-        _w, _h, _label_w, plot, rows = self._layout(k)
+        _, _, _, plot, rows = self._layout(k)
         span = self._span()
-        for _kind, driver, row_rect in rows:
+        for _, driver, row_rect in rows:
             if not (row_rect.top() <= pos.y() <= row_rect.bottom()):
                 continue
             clip = self._clip_rect(row_rect, plot, span, driver, k)
@@ -989,8 +1027,8 @@ class ScheduleOverlay(QtWidgets.QGraphicsItem):
             return
         pos = event.pos()
         k = self.panel_scale
-        w, _h, _label_w, _plot, _rows = self._layout(k)
-        _box, _label_pos, repeat_hit = self._repeat_geometry(w, k)
+        w, *_ = self._layout(k)
+        _, _, repeat_hit = self._repeat_geometry(w, k)
         if repeat_hit.contains(pos):
             self.canvas.toggle_repeat()
             self.update()
@@ -1020,21 +1058,25 @@ class ScheduleOverlay(QtWidgets.QGraphicsItem):
         if self._resizing:
             delta = event.screenPos() - self._resize_start_screen
             span_px = max(delta.x(), delta.y())
-            self.canvas.schedule_scale = max(self.MIN_SCALE, min(
-                self.MAX_SCALE, self._resize_start_scale * (1.0 + span_px / 140.0)))
+            self.canvas.schedule_scale = max(
+                self.MIN_SCALE,
+                min(self.MAX_SCALE, self._resize_start_scale * (1.0 + span_px / 140.0)),
+            )
             self.prepareGeometryChange()
             self.update()
             event.accept()
             return
         if self._clip_drag:
             driver, mode = self._clip_drag
+            if not self._clip_drag_ref:
+                return
             start0, end0, scene_x0 = self._clip_drag_ref
             k = self.panel_scale
-            _w, _h, _label_w, plot, _rows = self._layout(k)
+            _, _, _, plot, _ = self._layout(k)
             span = self._span()
             if plot.width() < 1 or span < 1e-9:
                 return
-            dt = (event.scenePos().x() - scene_x0) / plot.width() * span
+            dt = float(event.scenePos().x() - scene_x0) / float(plot.width()) * float(span)  # type: ignore
             if mode == "move":
                 length = end0 - start0
                 new_start = max(0.0, start0 + dt)
@@ -1055,8 +1097,9 @@ class ScheduleOverlay(QtWidgets.QGraphicsItem):
         if self._drag_start is not None:
             delta = event.screenPos() - self._drag_start
             scale = self.canvas.view.transform().m11() or 1.0
-            new_pos = QtCore.QPointF(self._pos_start.x() + delta.x() / scale,
-                                     self._pos_start.y() + delta.y() / scale)
+            new_pos = QtCore.QPointF(
+                self._pos_start.x() + delta.x() / scale, self._pos_start.y() + delta.y() / scale
+            )
             self.setPos(new_pos)
             self.canvas.schedule_pos = new_pos
             event.accept()
@@ -1076,6 +1119,7 @@ class ScheduleOverlay(QtWidgets.QGraphicsItem):
         super().mouseReleaseEvent(event)
 
     def paint(self, painter, option, widget=None):
+        _ = (option, widget)
         if not self._visible():
             return
         k = self.panel_scale
@@ -1101,9 +1145,10 @@ class ScheduleOverlay(QtWidgets.QGraphicsItem):
         painter.drawText(
             QtCore.QRectF(6 * k, 2 * k, w, 18.0 * k),
             int(QtCore.Qt.AlignmentFlag.AlignVCenter | QtCore.Qt.AlignmentFlag.AlignLeft),
-            "Schedule")
+            "Schedule",
+        )
 
-        box_rect, label_pos, _hit = self._repeat_geometry(w, k)
+        box_rect, label_pos, _ = self._repeat_geometry(w, k)
         painter.setFont(font_small)
         painter.setPen(S.INK)
         painter.drawText(label_pos, "Repeat")
@@ -1116,7 +1161,9 @@ class ScheduleOverlay(QtWidgets.QGraphicsItem):
             cx, cy = box_rect.center().x(), box_rect.center().y()
             cs = box_rect.width() * 0.28
             painter.drawLine(QtCore.QPointF(cx - cs, cy), QtCore.QPointF(cx - cs * 0.2, cy + cs))
-            painter.drawLine(QtCore.QPointF(cx - cs * 0.2, cy + cs), QtCore.QPointF(cx + cs, cy - cs))
+            painter.drawLine(
+                QtCore.QPointF(cx - cs * 0.2, cy + cs), QtCore.QPointF(cx + cs, cy - cs)
+            )
 
         # Row 2: the time axis, clear of row 1 entirely.
         painter.setFont(font_small)
@@ -1127,20 +1174,23 @@ class ScheduleOverlay(QtWidgets.QGraphicsItem):
         painter.drawText(QtCore.QPointF(plot.right() - end_w, self.HEADER_H * k - 5 * k), end_label)
 
         result = getattr(self.canvas, "motion_result", None)
-        playhead_t = getattr(self.canvas, "motion_time", None)
-        show_playhead = bool(result and result.ok and playhead_t is not None and span > 1e-9)
+        playhead_t = float(getattr(self.canvas, "motion_time", 0.0))
+        show_playhead = bool(result and result.ok and span > 1e-9)
 
-        for _kind, driver, row_rect in rows:
+        for _, driver, row_rect in rows:
             painter.setPen(QtGui.QPen(S.INK_LIGHT, 1.0, QtCore.Qt.PenStyle.DashLine))
-            painter.drawLine(QtCore.QPointF(plot.left(), row_rect.bottom()),
-                             QtCore.QPointF(plot.right(), row_rect.bottom()))
+            painter.drawLine(
+                QtCore.QPointF(plot.left(), row_rect.bottom()),
+                QtCore.QPointF(plot.right(), row_rect.bottom()),
+            )
             painter.setFont(font_small)
             painter.setPen(S.INK)
             label = getattr(driver, "label", "") or "Driver"
             painter.drawText(
                 QtCore.QRectF(4 * k, row_rect.top(), label_w - 6 * k, row_rect.height()),
                 int(QtCore.Qt.AlignmentFlag.AlignVCenter | QtCore.Qt.AlignmentFlag.AlignLeft),
-                label)
+                label,
+            )
 
             clip = self._clip_rect(row_rect, plot, span, driver, k)
             fill = QtGui.QColor(DRIVER)
@@ -1150,9 +1200,11 @@ class ScheduleOverlay(QtWidgets.QGraphicsItem):
             painter.drawRoundedRect(clip, 3 * k, 3 * k)
 
         if show_playhead:
-            x = plot.left() + min(1.0, playhead_t / span) * plot.width()
+            x = plot.left() + min(1.0, float(playhead_t) / float(span)) * float(plot.width())
             painter.setPen(QtGui.QPen(MOTION, 1.2, QtCore.Qt.PenStyle.DashLine))
-            painter.drawLine(QtCore.QPointF(x, plot.top() - 2 * k), QtCore.QPointF(x, plot.bottom()))
+            painter.drawLine(
+                QtCore.QPointF(x, plot.top() - 2 * k), QtCore.QPointF(x, plot.bottom())
+            )
 
         painter.setPen(QtGui.QPen(S.INK_LIGHT, 1.1))
         for i in (4.0, 8.0, 12.0):
@@ -1201,6 +1253,7 @@ class DriverPreview(QtWidgets.QGraphicsItem):
         return QtCore.QRectF(a, b).normalized().adjusted(-pad, -pad, pad, pad)
 
     def paint(self, painter, option, widget=None):
+        _ = (option, widget)
         target = self._target()
         if not target:
             return
@@ -1219,11 +1272,16 @@ class DriverPreview(QtWidgets.QGraphicsItem):
             pen.setCosmetic(True)
             painter.setPen(pen)
             painter.setBrush(QtGui.QColor(255, 255, 255, 120))
-            painter.drawPolygon(QtGui.QPolygonF([
-                QtCore.QPointF(a.x() + nx * half, a.y() + ny * half),
-                QtCore.QPointF(mid.x() + nx * half, mid.y() + ny * half),
-                QtCore.QPointF(mid.x() - nx * half, mid.y() - ny * half),
-                QtCore.QPointF(a.x() - nx * half, a.y() - ny * half)]))
+            painter.drawPolygon(
+                QtGui.QPolygonF(
+                    [
+                        QtCore.QPointF(a.x() + nx * half, a.y() + ny * half),
+                        QtCore.QPointF(mid.x() + nx * half, mid.y() + ny * half),
+                        QtCore.QPointF(mid.x() - nx * half, mid.y() - ny * half),
+                        QtCore.QPointF(a.x() - nx * half, a.y() - ny * half),
+                    ]
+                )
+            )
             painter.drawLine(mid, b)
         else:
             # A motor goes on the end that is pinned, or the end nearest the
@@ -1329,12 +1387,12 @@ class ActuatorTool(_DriverTool):
         )
         self.canvas.preview_driver = None
         self.canvas.select_entity("actuator", actuator.id)
-        self.canvas.set_prompt(
-            "Actuator added. Run Motion to see the force it needs.")
+        self.canvas.set_prompt("Actuator added. Run Motion to see the force it needs.")
         return True
 
 
 def _static_result_from_frame(model, frame):
+    _ = model
     """A motion frame, reshaped to look like a static solve, so the whole
     existing results toolbar -- reaction arrows, the table, the axial
     annotation on a selected member -- can read it without knowing whether
@@ -1428,7 +1486,8 @@ class MotionBar(QtWidgets.QFrame):
 
         self.btn_static = QtWidgets.QPushButton("Statics")
         self.btn_static.setToolTip(
-            "Show the static solve on the toolbar again, without clearing this run.")
+            "Show the static solve on the toolbar again, without clearing this run."
+        )
         self.btn_static.clicked.connect(lambda: editor.set_display_mode("static"))
         layout.addWidget(self.btn_static)
 
@@ -1495,11 +1554,24 @@ class MotionBar(QtWidgets.QFrame):
 
 
 class MotionController:
-    """Mixin for Editor: everything the transport bar and the overlay need.
+    import typing
 
-    Kept as a mixin rather than another few hundred lines in editor.py, so the
-    statics editor stays readable and the motion code can be read on its own.
-    """
+    if typing.TYPE_CHECKING:
+        from ..engine import model as _M
+
+        model: _M.Model
+        scene: typing.Any
+        result: typing.Any
+        diagnosis: typing.Any
+        motion_result: typing.Any
+        playing: bool
+        motion_time: float
+        _display_mode: str
+
+        def set_prompt(self, text: str): ...
+        def refresh_geometry(self): ...
+        def notify(self): ...
+        def save(self): ...
 
     def init_motion(self):
         self.motion_result = None
@@ -1508,8 +1580,8 @@ class MotionController:
         self.show_motion = True
         self.label_motion = True
         self.default_lever_length = 200.0
-        self._display_mode = "static"   # "static" or "motion": which result the toolbar shows
-        self._motion_timer = QtCore.QTimer(self)
+        self._display_mode = "static"  # "static" or "motion": which result the toolbar shows
+        self._motion_timer = QtCore.QTimer(self)  # type: ignore
         self._motion_timer.setInterval(33)
         self._motion_timer.timeout.connect(self._advance)
         self.show_graph = True
@@ -1535,10 +1607,15 @@ class MotionController:
         """Whichever result the static-results toolbar should show right
         now: the live motion frame while a run is the more recent thing the
         user did, the ordinary static solve otherwise."""
-        if (self._display_mode == "motion" and self.motion_result
-                and self.motion_result.ok and self.motion_result.frames):
+        if (
+            self._display_mode == "motion"
+            and self.motion_result
+            and self.motion_result.ok
+            and self.motion_result.frames
+        ):
             return _static_result_from_frame(
-                self.model, self.motion_result.frame_at(self.motion_time))
+                self.model, self.motion_result.frame_at(self.motion_time)
+            )
         return self.result
 
     def run_motion(self):
@@ -1685,6 +1762,7 @@ class MotionController:
             return
         try:
             from .commands import sync_hud_actions
+
             sync_hud_actions()
         except Exception:
             pass
@@ -1720,11 +1798,13 @@ class MotionController:
         for support in self.model.supports.values():
             mag = peak_reactions.get(support.holds)
             if mag and mag > 1e-6:
-                rows.append((
-                    f"Reaction {self.model.entity_label(support.holds)}",
-                    fmt(mag, "N"),
-                    "peak over the run",
-                ))
+                rows.append(
+                    (
+                        f"Reaction {self.model.entity_label(support.holds)}",
+                        fmt(mag, "N"),
+                        "peak over the run",
+                    )
+                )
 
         speed = result.peak_speed()
         if speed > 1e-9:

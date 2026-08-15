@@ -23,7 +23,7 @@ class _Command:
     shortcut = ""
 
     def GetResources(self):
-        res = {"Pixmap": icon_path(self.icon), "MenuText": self.text, "ToolTip": self.tip}
+        res: dict = {"Pixmap": icon_path(self.icon), "MenuText": self.text, "ToolTip": self.tip}
         if self.shortcut:
             res["Accel"] = self.shortcut
         return res
@@ -321,6 +321,8 @@ class SyncSketch(_Command):
 
     def Activated(self):
         editor = active_editor()
+        if editor is None:
+            return
         from . import sketch_import
 
         sketch = sketch_import.find_linked_sketch(editor.model, editor.host.obj.Document)
@@ -668,7 +670,7 @@ def sync_diagram_actions():
 # pattern, so they're a small hand-built widget embedded directly in the
 # FBD toolbar instead of a registered Gui.Command. Every entry stays None
 # until ensure_motion_widget() has actually inserted it.
-_MOTION_WIDGET = {"toolbar": None, "play_btn": None, "slider": None, "label": None}
+_MOTION_WIDGET: dict = {"toolbar": None, "play_btn": None, "slider": None, "label": None}
 
 
 def _set_checked(name, checked, enabled=None):
@@ -740,7 +742,7 @@ def sync_hud_actions():
         if has_mot and editor is not None:
             widget["slider"].blockSignals(True)
             widget["slider"].setValue(
-                int(1000 * getattr(editor, "motion_time", 0.0) / max(1e-6, mot_res.duration))
+                int(1000 * getattr(editor, "motion_time", 0.0) / max(1e-6, mot_res.duration if mot_res else 1.0))
             )
             widget["slider"].blockSignals(False)
     if widget["label"] is not None:

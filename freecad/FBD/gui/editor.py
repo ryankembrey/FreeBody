@@ -24,7 +24,7 @@ from .canvas import popup as P
 from .canvas.tools import build_tools
 from ..engine import model as M
 from ..engine import checks, statics
-from .motion import MotionController, MotionBar, MotorItem, ActuatorItem
+from .motion import MotionController, MotorItem, ActuatorItem
 
 
 DIAGRAM_MODES = [
@@ -41,7 +41,8 @@ class TreeSelectionObserver:
     def __init__(self, editor):
         self.editor = editor
 
-    def addSelection(self, doc_name, obj_name, sub_name, pnt):
+    def addSelection(self, doc_name, obj_name, _sub_name, _pnt):
+        _ = (_sub_name, _pnt)
         if not self.editor or getattr(self.editor, "_suspend_selection", False):
             return
         try:
@@ -110,10 +111,6 @@ class TreeSelectionObserver:
         return None, None
 
 
-
-
-
-
 class Editor(QtWidgets.QWidget, MotionController):
     # Panning should feel unrestricted in every direction, like Sketcher's
     # 2D editor, regardless of sheet size or current zoom. Kept as a
@@ -152,11 +149,17 @@ class Editor(QtWidgets.QWidget, MotionController):
         self.infinite_canvas = True
         self.show_sheet = True
         self.diagram_positions = {
-            "axial": None, "shear": None, "moment": None, "deflection": None,
+            "axial": None,
+            "shear": None,
+            "moment": None,
+            "deflection": None,
         }
         self.diagram_alignment = {}
         self.diagram_user_dragged = {
-            "axial": False, "shear": False, "moment": False, "deflection": False,
+            "axial": False,
+            "shear": False,
+            "moment": False,
+            "deflection": False,
         }
         self.diagram_activation_order = []
         self.results_table_pos = None
@@ -198,7 +201,7 @@ class Editor(QtWidgets.QWidget, MotionController):
         QtCore.QTimer.singleShot(0, self.fit)
         if App.GuiUp:
             try:
-                import FreeCADGui as Gui
+                import FreeCADGui as Gui  # type: ignore
 
                 self._tree_observer = TreeSelectionObserver(self)
                 Gui.Selection.addObserver(self._tree_observer)
@@ -710,7 +713,7 @@ class Editor(QtWidgets.QWidget, MotionController):
     def item_at(self, scene_pos):
         """Find entity item under scene_pos using screen-pixel tolerance."""
         # 1. Check motor
-        for (kind, ident), item in self._items.items():
+        for (kind, _ident), item in self._items.items():
             if kind == "motor":
                 try:
                     if item.contains(item.mapFromScene(scene_pos)):
@@ -729,7 +732,7 @@ class Editor(QtWidgets.QWidget, MotionController):
             return self._items[("anchor", aid)]
 
         # 4. Check supports
-        for (kind, ident), item in self._items.items():
+        for (kind, _ident), item in self._items.items():
             if kind == "support":
                 try:
                     if item.contains(item.mapFromScene(scene_pos)):
@@ -738,7 +741,7 @@ class Editor(QtWidgets.QWidget, MotionController):
                     pass
 
         # 5. Check loads
-        for (kind, ident), item in self._items.items():
+        for (kind, _ident), item in self._items.items():
             if kind in ("point_load", "moment_load"):
                 try:
                     if item.contains(item.mapFromScene(scene_pos)):
@@ -790,7 +793,9 @@ class Editor(QtWidgets.QWidget, MotionController):
         # serializes to one blob. FreeCAD's document undo does not reach into
         # it, so the shortcuts have to be handled here or Ctrl+Z silently
         # undoes something else entirely.
-        control = bool(modifiers) and bool(modifiers & QtCore.Qt.KeyboardModifier.ControlModifier)
+        if modifiers is None:
+            modifiers = QtCore.Qt.KeyboardModifier.NoModifier
+        control = bool(modifiers & QtCore.Qt.KeyboardModifier.ControlModifier)
         if control:
             shift = bool(modifiers & QtCore.Qt.KeyboardModifier.ShiftModifier)
             if key == QtCore.Qt.Key.Key_Z and not shift:
@@ -919,6 +924,7 @@ class Editor(QtWidgets.QWidget, MotionController):
         if App.GuiUp:
             try:
                 from .commands import sync_diagram_actions, sync_hud_actions
+
                 sync_diagram_actions()
                 sync_hud_actions()
             except Exception:
@@ -944,12 +950,6 @@ class Editor(QtWidgets.QWidget, MotionController):
             try:
                 self.results_overlay.prepareGeometryChange()
                 self.results_overlay.update()
-            except RuntimeError:
-                pass
-
-        if hasattr(self, "hud"):
-            try:
-                self.hud.sync_state()
             except RuntimeError:
                 pass
 
@@ -1182,7 +1182,7 @@ class Editor(QtWidgets.QWidget, MotionController):
 
         default_val = 1000.0 if drawn_len < 500 else round(drawn_len, -1)
         spin = form.add_spin(
-            "Length", default_val, lambda v: None, lo=1.0, hi=1e9, decimals=1, suffix="mm"
+            "Length", default_val, lambda _: None, lo=1.0, hi=1e9, decimals=1, suffix="mm"
         )
 
         def apply_calibration():
@@ -1305,22 +1305,24 @@ class Editor(QtWidgets.QWidget, MotionController):
         menu = QtWidgets.QMenu(self)
 
         menu.addAction("Export PDF...").triggered.connect(self.export_pdf_prompt)
-        
+
         view_pos = self.view.mapFromGlobal(global_pos)
         scene_pos = self.view.mapToScene(view_pos)
         item = self.item_at(scene_pos)
-        
+
         ident = None
-        if item and item.kind == 'member':
+        if item and item.kind == "member":
             ident = item.ident
         else:
             kind, sel_ident = self.selected_entity()
-            if kind == 'member':
+            if kind == "member":
                 ident = sel_ident
-                
+
         if ident is not None:
-            menu.addAction('Isolate Member (FBD)').triggered.connect(lambda _, i=ident: self.isolate_member(i))
-            
+            menu.addAction("Isolate Member (FBD)").triggered.connect(
+                lambda _, i=ident: self.isolate_member(i)
+            )
+
         menu.addSeparator()
 
         lbl_act = menu.addAction("Show Joint Labels")
@@ -1371,6 +1373,8 @@ class Editor(QtWidgets.QWidget, MotionController):
 
         a = self.model.nodes.get(member.start)
         b = self.model.nodes.get(member.end)
+        if a is None or b is None:
+            return
 
         from freecad.FBD.engine.model import Model
 
@@ -1422,11 +1426,12 @@ class Editor(QtWidgets.QWidget, MotionController):
                 iso.add_line_load(new_mem.id, q=ll.q, direction=ll.direction)
 
         # Open in a new editor pane
-        import FreeCAD as App
+        import FreeCAD as App  # type: ignore
         from freecad.FBD.gui import document as doc_mod
         from freecad.FBD.gui.editor_host import open_editor
 
         from freecad.FBD.gui.sketch_import import fit_to_sheet
+
         fit_to_sheet(iso, size_fraction=0.6)
         doc = App.ActiveDocument
         if doc:
@@ -1467,7 +1472,6 @@ class Editor(QtWidgets.QWidget, MotionController):
         self.refresh_geometry()
         self.notify()
         return self.diagnosis
-
 
     def status_text(self):
         """One line describing the model, for the task panel."""
@@ -1570,15 +1574,15 @@ class Editor(QtWidgets.QWidget, MotionController):
         return rows
 
     def selected_entity(self):
-        for (kind, ident), item in self._items.items():
+        for (kind, _ident), item in self._items.items():
             if item.isSelected():
-                return kind, ident
+                return kind, _ident
         return None, None
 
     def closeEvent(self, event):
         if hasattr(self, "_tree_observer") and self._tree_observer:
             try:
-                import FreeCADGui as Gui
+                import FreeCADGui as Gui  # type: ignore
 
                 Gui.Selection.removeObserver(self._tree_observer)
             except Exception:
@@ -1619,7 +1623,7 @@ class Editor(QtWidgets.QWidget, MotionController):
                 "actuator": "Actuator",
             }
 
-            import FreeCADGui as Gui
+            import FreeCADGui as Gui  # type: ignore
 
             Gui.Selection.clearSelection(doc_name)
 
@@ -1632,201 +1636,6 @@ class Editor(QtWidgets.QWidget, MotionController):
                         Gui.Selection.addSelection(doc_name, obj.Name)
         except Exception:
             pass
-
-    def _spin(self, value, setter, lo=-1e12, hi=1e12, decimals=3, suffix=""):
-        box = QtWidgets.QDoubleSpinBox()
-        box.setRange(lo, hi)
-        box.setDecimals(decimals)
-        box.setValue(float(value))
-        box.setKeyboardTracking(False)
-        if suffix:
-            box.setSuffix(" " + suffix)
-
-        def changed(v):
-            self.push_undo("Edit")
-            setter(v)
-            self.invalidate_result()
-            self.rebuild()
-            self.save()
-
-        box.valueChanged.connect(changed)
-        return box
-
-    def _props_node(self, ident):
-        node = self.model.nodes.get(ident)
-        if not node:
-            return
-        name = QtWidgets.QLineEdit(node.label)
-        name.editingFinished.connect(
-            lambda: (setattr(node, "label", name.text()), self.refresh_geometry())
-        )
-        self.props_form.addRow("Name", name)
-        self.props_form.addRow(
-            "X", self._spin(node.x, lambda v: setattr(node, "x", v), suffix="mm")
-        )
-        self.props_form.addRow(
-            "Y", self._spin(node.y, lambda v: setattr(node, "y", v), suffix="mm")
-        )
-
-    def _props_member(self, ident):
-        member = self.model.members.get(ident)
-        if not member:
-            return
-        name = QtWidgets.QLineEdit(member.label)
-        name.editingFinished.connect(
-            lambda: (setattr(member, "label", name.text()), self.refresh_geometry())
-        )
-        self.props_form.addRow("Name", name)
-        length = self.model.member_length(member)
-        self.props_form.addRow("Length", QtWidgets.QLabel(f"{length:.4g} mm"))
-        self.props_form.addRow(
-            "EA",
-            self._spin(
-                member.EA, lambda v: setattr(member, "EA", v), lo=1.0, decimals=1, suffix="N"
-            ),
-        )
-        self.props_form.addRow(
-            "EI",
-            self._spin(
-                member.EI, lambda v: setattr(member, "EI", v), lo=1.0, decimals=1, suffix="N.mm2"
-            ),
-        )
-        note = QtWidgets.QLabel("Stiffness only affects indeterminate structures.")
-        note.setWordWrap(True)
-        note.setStyleSheet("color:#5b6270")
-        self.props_form.addRow(note)
-
-    def _props_support(self, ident):
-        support = self.model.supports.get(ident)
-        if not support:
-            return
-        combo = QtWidgets.QComboBox()
-        for kind in M.SUPPORT_KINDS:
-            combo.addItem(M.SUPPORT_LABELS[kind], kind)
-        combo.setCurrentIndex(M.SUPPORT_KINDS.index(support.kind))
-
-        def kind_changed(index):
-            self.push_undo("Change support")
-            support.kind = combo.itemData(index)
-            if support.kind == M.SPRING and not support.reaction_components():
-                support.ky = 1000.0
-            self.invalidate_result()
-            self.rebuild()
-            self.save()
-            self.select_entity("support", ident)
-
-        combo.currentIndexChanged.connect(kind_changed)
-        self.props_form.addRow("Type", combo)
-        self.props_form.addRow(
-            "Angle",
-            self._spin(
-                support.angle,
-                lambda v: setattr(support, "angle", v),
-                lo=-360,
-                hi=360,
-                decimals=1,
-                suffix="deg",
-            ),
-        )
-        if support.kind == M.SPRING:
-            self.props_form.addRow(
-                "kx",
-                self._spin(
-                    support.kx,
-                    lambda v: setattr(support, "kx", v),
-                    lo=0.0,
-                    decimals=2,
-                    suffix="N/mm",
-                ),
-            )
-            self.props_form.addRow(
-                "ky",
-                self._spin(
-                    support.ky,
-                    lambda v: setattr(support, "ky", v),
-                    lo=0.0,
-                    decimals=2,
-                    suffix="N/mm",
-                ),
-            )
-            self.props_form.addRow(
-                "kr",
-                self._spin(
-                    support.kr,
-                    lambda v: setattr(support, "kr", v),
-                    lo=0.0,
-                    decimals=2,
-                    suffix="N.mm/rad",
-                ),
-            )
-        if self.result and self.result.ok:
-            reaction = self.result.reactions.get(support.holds)
-            if reaction:
-                self.props_form.addRow(
-                    "Reaction", QtWidgets.QLabel(f"{reaction.fx:.4g}, {reaction.fy:.4g} N")
-                )
-
-    def _props_point_load(self, ident):
-        load = self.model.point_loads.get(ident)
-        if not load:
-            return
-        self.props_form.addRow(
-            "Fx", self._spin(load.fx, lambda v: setattr(load, "fx", v), decimals=2, suffix="N")
-        )
-        self.props_form.addRow(
-            "Fy", self._spin(load.fy, lambda v: setattr(load, "fy", v), decimals=2, suffix="N")
-        )
-        magnitude = QtWidgets.QLabel(f"{load.magnitude():.4g} N")
-        self.props_form.addRow("Magnitude", magnitude)
-        angle = math.degrees(math.atan2(load.fy, load.fx)) if load.magnitude() else 0.0
-        self.props_form.addRow("Direction", QtWidgets.QLabel(f"{angle:.1f} deg"))
-
-    def _props_moment_load(self, ident):
-        load = self.model.moment_loads.get(ident)
-        if not load:
-            return
-        self.props_form.addRow(
-            "M", self._spin(load.m, lambda v: setattr(load, "m", v), decimals=2, suffix="N.mm")
-        )
-        note = QtWidgets.QLabel("Counter-clockwise is positive.")
-        note.setStyleSheet("color:#5b6270")
-        self.props_form.addRow(note)
-
-    def _props_line_load(self, ident):
-        load = self.model.line_loads.get(ident)
-        if not load:
-            return
-        self.props_form.addRow(
-            "q", self._spin(load.q, lambda v: setattr(load, "q", v), decimals=4, suffix="N/mm")
-        )
-        combo = QtWidgets.QComboBox()
-        for key, label in (
-            ("y", "Global vertical"),
-            ("x", "Global horizontal"),
-            ("perp", "Perpendicular to member"),
-        ):
-            combo.addItem(label, key)
-        index = max(
-            0,
-            [c[0] for c in (("y", 0), ("x", 1), ("perp", 2))].index(load.direction)
-            if load.direction in ("y", "x", "perp")
-            else 0,
-        )
-        combo.setCurrentIndex(index)
-
-        def changed(i):
-            self.push_undo("Edit line load")
-            load.direction = combo.itemData(i)
-            self.invalidate_result()
-            self.rebuild()
-            self.save()
-
-        combo.currentIndexChanged.connect(changed)
-        self.props_form.addRow("Direction", combo)
-        member = self.model.members.get(load.member)
-        if member:
-            total = abs(load.q) * self.model.member_length(member)
-            self.props_form.addRow("Total", QtWidgets.QLabel(f"{total:.4g} N"))
 
     # ----------------------------------------------------------- display
 
