@@ -49,6 +49,25 @@ def set_active(editor):
     _ACTIVE["editor"] = editor
 
 
+def set_editor_visible(name, visible):
+    """Show or hide the diagram's editor page without closing it.
+
+    Unlike close_editor (used when the diagram itself is deleted), the
+    window and everything in it -- the current tool, the selection, the
+    undo stack -- survives a hide the same way any other Visibility
+    toggle is reversible: toggling it back on restores the same editor,
+    not a fresh one.
+    """
+    entry = _OPEN.get(name)
+    if not entry:
+        return
+    sub_window, _editor = entry
+    try:
+        sub_window.setVisible(bool(visible))
+    except RuntimeError:
+        pass
+
+
 def close_editor(name):
     """Close the editor for a diagram object, if one is open.
 
@@ -132,7 +151,15 @@ def refresh_editor(obj):
         return
     _sub, editor = entry
     try:
-        editor.model.__dict__.update(doc_mod.load_model(obj).__dict__)
+        fresh = doc_mod.load_model(obj)
+        if fresh.to_dict() == editor.model.to_dict():
+            # Already caught up: this call is the editor's own save
+            # reaching back around through onChanged, not something
+            # external like undo. A rebuild here would be a no-op except
+            # for silently dropping the current selection, so skip it
+            # rather than pay that cost on every single edit.
+            return
+        editor.model.__dict__.update(fresh.__dict__)
         editor.invalidate_result()
         editor.rebuild()
     except RuntimeError:

@@ -56,6 +56,24 @@ class Diagram:
 
         refresh_editor(obj)
 
+    def onChanged(self, obj, prop):
+        """Catch up an open editor when Data changes from outside its own
+        save path.
+
+        FreeCAD's native undo and redo restore this property directly,
+        with nothing else in the ordinary edit flow to notice: without
+        this, an already-open editor kept showing its stale in-memory
+        model after an undo, even though the tree and the Data property
+        itself had already gone back to the old state.
+        """
+        if prop != "Data" or _deleting["busy"]:
+            return
+        try:
+            from .editor_host import refresh_editor
+            refresh_editor(obj)
+        except Exception:
+            pass
+
     def __getstate__(self):
         return None
 
@@ -70,12 +88,40 @@ class ViewProviderDiagram:
 
     def attach(self, vobj):
         self.Object = vobj.Object
+        # Nothing here ever renders in the 3D view -- everything is drawn
+        # on our own 2D canvas -- but FreeCAD's own tree needs a real scene
+        # node behind a claimed display mode, or its eye-icon styling has
+        # nothing concrete to track regardless of what Visibility says.
+        from pivy import coin
+        self._node = coin.SoSeparator()
+        vobj.addDisplayMode(self._node, "Diagram")
 
     def getDisplayModes(self, vobj):
         return ["Diagram"]
 
     def getDefaultDisplayMode(self):
         return "Diagram"
+
+    def onChanged(self, vobj, prop):
+        """Toggling the whole diagram cascades to every structure in it,
+        which -- through its own onChanged -- cascades to every entity in
+        turn. Only ever sets Structure-level Visibility here; the entity
+        level is Structure's job, not duplicated at this level too.
+        """
+        if prop != "Visibility":
+            return
+        obj = getattr(vobj, "Object", None)
+        if obj is None:
+            return
+        visible = bool(vobj.Visibility)
+        for structure in list(getattr(obj, "Group", [])):
+            if hasattr(structure, "ViewObject") and structure.ViewObject is not None:
+                structure.ViewObject.Visibility = visible
+        try:
+            from .editor_host import set_editor_visible
+            set_editor_visible(obj.Name, visible)
+        except Exception:
+            pass
 
     def getIcon(self):
         from .commands import icon_path
@@ -157,6 +203,45 @@ class ViewProviderStructure:
 
     def attach(self, vobj):
         self.Object = vobj.Object
+        from pivy import coin
+        self._node = coin.SoSeparator()
+        vobj.addDisplayMode(self._node, "Structure")
+
+    def getDisplayModes(self, vobj):
+        return ["Structure"]
+
+    def getDefaultDisplayMode(self):
+        return "Structure"
+
+    def onChanged(self, vobj, prop):
+        """Toggling a whole structure hides or shows every entity in it on
+        the canvas, and keeps each entity's own Visibility (and so its own
+        eye icon) in step with the structure's, the same way toggling one
+        entity on its own already works.
+        """
+        if prop != "Visibility":
+            return
+        obj = getattr(vobj, "Object", None)
+        if obj is None:
+            return
+        diagram = _owning_diagram(obj)
+        if diagram is None:
+            return
+        visible = bool(vobj.Visibility)
+        try:
+            from .editor_host import _OPEN
+            entry = _OPEN.get(diagram.Name)
+            editor = entry[1] if entry else None
+        except Exception:
+            editor = None
+        for child in list(getattr(obj, "Group", [])):
+            kind, ident = _parse_entity(getattr(child, "Name", ""))
+            if kind and editor is not None:
+                item = editor._items.get((kind, ident))
+                if item is not None:
+                    item.setVisible(visible)
+            if hasattr(child, "ViewObject") and child.ViewObject is not None:
+                child.ViewObject.Visibility = visible
 
     def onDelete(self, vobj, subelements):
         """Delete the whole structure from the diagram, after the fact.
@@ -217,6 +302,46 @@ class ViewProviderEntity:
 
     def attach(self, vobj):
         self.Object = vobj.Object
+        from pivy import coin
+        self._node = coin.SoSeparator()
+        vobj.addDisplayMode(self._node, "Entity")
+
+    def getDisplayModes(self, vobj):
+        return ["Entity"]
+
+    def getDefaultDisplayMode(self):
+        return "Entity"
+
+    def onChanged(self, vobj, prop):
+        """Mirror the tree's own Visibility toggle onto the canvas item.
+
+        These objects carry no Shape of their own for FreeCAD's 3D view
+        to hide -- everything is drawn on our own 2D page instead, so
+        Visibility has to be wired there by hand or the toggle does
+        nothing at all, which is exactly what was happening.
+        """
+        if prop != "Visibility":
+            return
+        obj = getattr(vobj, "Object", None)
+        if obj is None:
+            return
+        kind, ident = _parse_entity(getattr(obj, "Name", ""))
+        if not kind:
+            return
+        diagram = _owning_diagram(obj)
+        if diagram is None:
+            return
+        try:
+            from .editor_host import _OPEN
+            entry = _OPEN.get(diagram.Name)
+            if not entry:
+                return
+            _sub, editor = entry
+            item = editor._items.get((kind, ident))
+            if item is not None:
+                item.setVisible(bool(vobj.Visibility))
+        except Exception:
+            pass
 
     def onDelete(self, vobj, subelements):
         """Delete the entity from the diagram, after the fact.
@@ -370,7 +495,7 @@ def _sync_structure_children(struct_obj, model: Model, comp_nodes):
             continue
         obj_name = f"Node_{n.id}"
         child = get_child(obj_name, "tool_node.svg")
-        child.Label = f"Joint {n.label} ({n.x:,.0f}, {n.y:,.0f})"
+        child.Label = f"Joint {n.label}"
         active_children.append(child)
 
     for m in sorted(model.members.values(), key=lambda x: x.id):
@@ -381,8 +506,7 @@ def _sync_structure_children(struct_obj, model: Model, comp_nodes):
             b = model.nodes.get(m.end)
             a_lbl = a.label if a else str(m.start)
             b_lbl = b.label if b else str(m.end)
-            length = model.member_length(m)
-            child.Label = f"Member {m.label} ({a_lbl}-{b_lbl}, {length:,.0f}mm)"
+            child.Label = f"Member {m.label} ({a_lbl}-{b_lbl})"
             active_children.append(child)
 
     for s in sorted(model.supports.values(), key=lambda x: x.id):
@@ -393,16 +517,51 @@ def _sync_structure_children(struct_obj, model: Model, comp_nodes):
             child.Label = f"Support {s.kind.title()} at {model.entity_label(s.holds)}"
             active_children.append(child)
 
+    # Shared by every kind below that attaches to a member rather than
+    # directly to a joint: a member belongs to this structure if either
+    # of its own ends does, matching every other loop in this function.
+    member_ids_in_comp = {
+        m.id for m in model.members.values()
+        if m.start in comp_nodes or m.end in comp_nodes
+    }
+
+    def anchor_in_comp(anchor_id):
+        a = model.anchors.get(anchor_id) if anchor_id else None
+        return bool(a and a.member in member_ids_in_comp)
+
     for p in sorted(model.point_loads.values(), key=lambda x: x.id):
-        if p.node in comp_nodes or (
-            p.anchor
-            and model.anchors.get(p.anchor)
-            and model.anchors[p.anchor].member
-            in [m.id for m in model.members.values() if m.start in comp_nodes]
-        ):
+        if p.node in comp_nodes or anchor_in_comp(p.anchor):
             obj_name = f"Force_{p.id}"
             child = get_child(obj_name, "tool_force.svg")
             child.Label = f"Force {p.magnitude():,.0f} N"
+            active_children.append(child)
+
+    for a in sorted(model.anchors.values(), key=lambda x: x.id):
+        if a.member in member_ids_in_comp:
+            obj_name = f"Anchor_{a.id}"
+            child = get_child(obj_name, "tool_anchor.svg")
+            child.Label = f"Point {a.label}"
+            active_children.append(child)
+
+    for mo in sorted(model.motors.values(), key=lambda x: x.id):
+        if mo.node in comp_nodes:
+            obj_name = f"Motor_{mo.id}"
+            child = get_child(obj_name, "tool_motor.svg")
+            child.Label = f"Motor {mo.label}"
+            active_children.append(child)
+
+    for ac in sorted(model.actuators.values(), key=lambda x: x.id):
+        if ac.member in member_ids_in_comp:
+            obj_name = f"Actuator_{ac.id}"
+            child = get_child(obj_name, "tool_actuator.svg")
+            child.Label = f"Actuator {ac.label}"
+            active_children.append(child)
+
+    for ml in sorted(model.moment_loads.values(), key=lambda x: x.id):
+        if ml.node in comp_nodes or anchor_in_comp(ml.anchor):
+            obj_name = f"Moment_{ml.id}"
+            child = get_child(obj_name, "tool_moment.svg")
+            child.Label = f"Moment {ml.m:,.0f} N.mm"
             active_children.append(child)
 
     orphaned_children = set(existing_children.values()) - set(active_children)
