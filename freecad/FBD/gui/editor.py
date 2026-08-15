@@ -388,9 +388,15 @@ class Editor(QtWidgets.QWidget, MotionController):
 
     def _is_near_box_edge(self, scene_pos, rect, tol_pixels=8.0) -> bool:
         tol = self.px(tol_pixels)
-        outer = rect.adjusted(-tol, -tol, tol, tol)
-        inner = rect.adjusted(tol, tol, -tol, -tol)
-        return outer.contains(scene_pos) and not inner.contains(scene_pos)
+        x, y = scene_pos.x(), scene_pos.y()
+        r = rect.normalized()
+        if not r.adjusted(-tol, -tol, tol, tol).contains(scene_pos):
+            return False
+        dist_left = abs(x - r.left())
+        dist_right = abs(x - r.right())
+        dist_top = abs(y - r.top())
+        dist_bottom = abs(y - r.bottom())
+        return min(dist_left, dist_right, dist_top, dist_bottom) <= tol
 
     def _find_component_at(self, scene_pos):
         from ..engine.checks import _components
@@ -1299,64 +1305,115 @@ class Editor(QtWidgets.QWidget, MotionController):
         if path:
             self.export_pdf(path)
 
-    def show_context_menu(self, global_pos):
+    def show_context_menu(self, global_pos, clicked_item=None):
         import PySide6.QtWidgets as QtWidgets
+        import PySide6.QtGui as QtGui
+        from .commands import icon_path
+        from ..engine import model as M
 
         menu = QtWidgets.QMenu(self)
 
-        menu.addAction("Export PDF...").triggered.connect(self.export_pdf_prompt)
+        def add_action(parent, text, callback, icon_name=None, checkable=False, checked=False):
+            act = parent.addAction(text)
+            if icon_name:
+                act.setIcon(QtGui.QIcon(icon_path(icon_name)))
+            if checkable:
+                act.setCheckable(True)
+                act.setChecked(checked)
+            act.triggered.connect(callback)
+            return act
 
-        view_pos = self.view.mapFromGlobal(global_pos)
-        scene_pos = self.view.mapToScene(view_pos)
-        item = self.item_at(scene_pos)
+        kind = clicked_item.kind if clicked_item and hasattr(clicked_item, "kind") else None
+        ident = clicked_item.ident if clicked_item and hasattr(clicked_item, "ident") else None
 
-        ident = None
-        if item and item.kind == "member":
-            ident = item.ident
-        else:
-            kind, sel_ident = self.selected_entity()
-            if kind == "member":
-                ident = sel_ident
+        # --- 1. Object-specific Context Actions ---
+        if kind == "node":
+            add_action(menu, "Edit Joint...", lambda: clicked_item.open_editor(clicked_item.anchor_point()), "tool_node.svg")
+            
+            sup_menu = menu.addMenu("Add Support")
+            sup_menu.setIcon(QtGui.QIcon(icon_path("tool_pin.svg")))
+            add_action(sup_menu, "Pin", lambda: self.edit(lambda m: m.add_support(ident, M.PIN)), "tool_pin.svg")
+            add_action(sup_menu, "Roller", lambda: self.edit(lambda m: m.add_support(ident, M.ROLLER_X)), "tool_roller.svg")
+            add_action(sup_menu, "Fixed", lambda: self.edit(lambda m: m.add_support(ident, M.FIXED)), "tool_fixed.svg")
+            add_action(sup_menu, "Spring", lambda: self.edit(lambda m: m.add_support(ident, M.SPRING, ky=1000.0)), "tool_spring.svg")
+            
+            load_menu = menu.addMenu("Add Load")
+            load_menu.setIcon(QtGui.QIcon(icon_path("tool_force.svg")))
+            add_action(load_menu, "Force", lambda: self.edit(lambda m: m.add_point_load(node=ident, fx=0.0, fy=-self.default_force)), "tool_force.svg")
+            add_action(load_menu, "Moment", lambda: self.edit(lambda m: m.add_moment_load(node=ident, m=self.default_moment)), "tool_moment.svg")
+            
+            menu.addSeparator()
+            add_action(menu, "Delete Joint", self.delete_selection)
+            
+        elif kind == "member":
+            add_action(menu, "Edit Member...", lambda: clicked_item.open_editor(clicked_item.boundingRect().center()), "tool_member.svg")
+            add_action(menu, "Isolate Member (FBD)", lambda: self.isolate_member(ident), "fbd_new.svg")
+            menu.addSeparator()
+            add_action(menu, "Add Point Load (Midspan)", lambda: self.edit(lambda m: m.add_point_load(anchor=m.add_anchor(ident, 0.5).id, fx=0.0, fy=-self.default_force)), "tool_force.svg")
+            add_action(menu, "Add Line Load", lambda: self.edit(lambda m: m.add_line_load(ident, -self.default_line_load, "y")), "tool_lineload.svg")
+            menu.addSeparator()
+            add_action(menu, "Delete Member", self.delete_selection)
 
-        if ident is not None:
-            menu.addAction("Isolate Member (FBD)").triggered.connect(
-                lambda _, i=ident: self.isolate_member(i)
-            )
+        elif kind == "support":
+            add_action(menu, "Edit Support...", lambda: clicked_item.open_editor(clicked_item.anchor_point()), "tool_pin.svg")
+            sup = clicked_item.support()
+            if sup:
+                sw_menu = menu.addMenu("Change Type")
+                for k in M.SUPPORT_KINDS:
+                    icon = f"tool_{k if k in ('pin', 'fixed', 'spring') else 'roller'}.svg"
+                    add_action(sw_menu, M.SUPPORT_LABELS[k], lambda k_=k: clicked_item._set_kind(sup, k_), icon, checkable=True, checked=(sup.kind==k))
+            menu.addSeparator()
+            add_action(menu, "Delete Support", self.delete_selection)
+            
+        elif kind in ("point_load", "moment_load", "line_load"):
+            icon = "tool_force.svg" if kind == "point_load" else "tool_moment.svg" if kind == "moment_load" else "tool_lineload.svg"
+            add_action(menu, "Edit Load...", lambda: clicked_item.open_editor(clicked_item.boundingRect().center()), icon)
+            menu.addSeparator()
+            add_action(menu, "Delete Load", self.delete_selection)
+            
+        elif kind in ("motor", "actuator"):
+            add_action(menu, "Edit Driver...", lambda: clicked_item.open_editor(clicked_item.boundingRect().center()), f"tool_{kind}.svg")
+            menu.addSeparator()
+            add_action(menu, "Delete Driver", self.delete_selection)
+            
+        elif kind == "anchor":
+            add_action(menu, "Edit Point...", lambda: clicked_item.open_editor(clicked_item.anchor_point()), "tool_anchor.svg")
+            menu.addSeparator()
+            add_action(menu, "Delete Point", self.delete_selection)
 
+        # --- Intercepting Diagram UI Overlays ---
+        elif type(clicked_item).__name__ == "ResultsTableOverlay":
+            add_action(menu, "Hide Results Table", self.toggle_results_table, "tool_hud_table.svg")
+        elif type(clicked_item).__name__ == "EffortGraphOverlay":
+            add_action(menu, "Hide Graph", self.toggle_graph, "tool_hud_graph.svg")
+        elif type(clicked_item).__name__ == "SingleDiagramOverlay":
+            k = clicked_item.kind
+            text = "Axial" if k == "axial" else "Shear" if k == "shear" else "Moment"
+            add_action(menu, f"Hide {text} Diagram", getattr(self, f"toggle_{k}"), f"tool_diagram_{k}.svg")
+
+        # --- 2. Global Actions (Always available) ---
+        if kind is not None or type(clicked_item).__name__ in ("ResultsTableOverlay", "EffortGraphOverlay", "SingleDiagramOverlay"):
+            menu.addSeparator()
+
+        add_action(menu, "Fit View", self.fit, "tool_fit.svg")
+        add_action(menu, "Solve Diagram", self.solve, "fbd_solve.svg")
+        
         menu.addSeparator()
+        
+        disp_menu = menu.addMenu("Display")
+        add_action(disp_menu, "Joint Labels", self.toggle_labels, "tool_hud_labels.svg", checkable=True, checked=self.show_labels)
+        add_action(disp_menu, "Components (Fx/Fy)", self.toggle_components, "tool_hud_components.svg", checkable=True, checked=self.show_components)
+        add_action(disp_menu, "Reactions", self.toggle_reactions, "tool_hud_reactions.svg", checkable=True, checked=self.show_reactions)
+        add_action(disp_menu, "Results Table", self.toggle_results_table, "tool_hud_table.svg", checkable=True, checked=getattr(self, "show_results_table", True))
 
-        lbl_act = menu.addAction("Show Joint Labels")
-        lbl_act.setCheckable(True)
-        lbl_act.setChecked(self.show_labels)
-        lbl_act.triggered.connect(self.toggle_labels)
-
-        rxn_act = menu.addAction("Show Reactions")
-        rxn_act.setCheckable(True)
-        rxn_act.setChecked(self.show_reactions)
-        rxn_act.triggered.connect(self.toggle_reactions)
-
-        tbl_act = menu.addAction("Show Results Table")
-        tbl_act.setCheckable(True)
-        tbl_act.setChecked(getattr(self, "show_results_table", True))
-        tbl_act.triggered.connect(self.toggle_results_table)
-
-        menu.addSeparator()
         diag_menu = menu.addMenu("Internal Diagrams")
-
-        act = diag_menu.addAction("Axial Force")
-        act.setCheckable(True)
-        act.setChecked(self.show_axial)
-        act.triggered.connect(self.toggle_axial)
-
-        act = diag_menu.addAction("Shear Force")
-        act.setCheckable(True)
-        act.setChecked(self.show_shear)
-        act.triggered.connect(self.toggle_shear)
-
-        act = diag_menu.addAction("Bending Moment")
-        act.setCheckable(True)
-        act.setChecked(self.show_moment)
-        act.triggered.connect(self.toggle_moment)
+        add_action(diag_menu, "Axial Force", self.toggle_axial, "tool_diagram_axial.svg", checkable=True, checked=self.show_axial)
+        add_action(diag_menu, "Shear Force", self.toggle_shear, "tool_diagram_shear.svg", checkable=True, checked=self.show_shear)
+        add_action(diag_menu, "Bending Moment", self.toggle_moment, "tool_diagram_moment.svg", checkable=True, checked=self.show_moment)
+        add_action(diag_menu, "Deflection", self.toggle_deflection, "tool_diagram_deflection.svg", checkable=True, checked=getattr(self, "show_deflection", False))
+        
+        menu.addSeparator()
+        add_action(menu, "Export PDF...", self.export_pdf_prompt, "fbd_new.svg")
 
         menu.exec(global_pos)
 

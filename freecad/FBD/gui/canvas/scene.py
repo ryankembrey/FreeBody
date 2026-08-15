@@ -261,12 +261,24 @@ class View(QtWidgets.QGraphicsView):
 
     def contextMenuEvent(self, event):
         scene_pos = self.mapToScene(event.pos())
-        for item in self.scene().items(scene_pos):
-            if type(item).__name__ == "SupportItem":
-                super().contextMenuEvent(event)
-                return
+        items = self.scene().items(scene_pos)
+        clicked_item = None
+        
+        for item in items:
+            if hasattr(item, "kind") and getattr(item, "kind", None):
+                clicked_item = item
+                break
+            elif type(item).__name__ in ("ResultsTableOverlay", "EffortGraphOverlay", "SingleDiagramOverlay"):
+                clicked_item = item
+                break
+
+        # Select the item if it isn't already selected (leaving empty canvas clicks alone)
+        if clicked_item and hasattr(clicked_item, "setSelected"):
+            if not clicked_item.isSelected():
+                clicked_item.setSelected(True)
+
         if hasattr(self.canvas, "show_context_menu"):
-            self.canvas.show_context_menu(event.globalPos())
+            self.canvas.show_context_menu(event.globalPos(), clicked_item)
 
     def keyPressEvent(self, event):
         if self.canvas.handle_key(event.key(), event.modifiers()):

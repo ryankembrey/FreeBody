@@ -584,17 +584,6 @@ class SupportItem(_Item):
         painter.drawLine(a, b)
         _hatch(painter, a, b, size * 0.4)
 
-    def contextMenuEvent(self, event):
-        """Right-click: switch the support type in one click, no form needed."""
-        support = self.support()
-        if support is None:
-            return
-        options = [(k, M.SUPPORT_LABELS[k]) for k in M.SUPPORT_KINDS]
-        P.quick_menu(
-            event.widget(), event.screenPos(), options, lambda kind: self._set_kind(support, kind)
-        )
-        event.accept()
-
     def _set_kind(self, support, kind):
         def apply():
             support.kind = kind
@@ -1676,6 +1665,48 @@ class SingleDiagramOverlay(QtWidgets.QGraphicsItem):
 
         return QtCore.QRectF(min_x, min_y, max_x - min_x, max_y - min_y)
 
+    def shape(self):
+        p = QtGui.QPainterPath()
+        res = getattr(self.canvas, "display_result", None)
+        if not res or not res.ok:
+            return p
+        model = self.canvas.model
+        sc = self.sc()
+        peak = max(
+            (
+                max((abs(v) for v in getattr(mf, self.kind)), default=0.0)
+                for mf in res.members.values()
+                if getattr(mf, self.kind)
+            ),
+            default=0.0,
+        )
+        if peak < 1e-12:
+            return p
+        for mid, mf in res.members.items():
+            member = model.members.get(mid)
+            values = getattr(mf, self.kind)
+            if not member or not values:
+                continue
+            a, b = model.nodes.get(member.start), model.nodes.get(member.end)
+            if not a or not b:
+                continue
+            pa, pb = to_scene(a.x, a.y, sc), to_scene(b.x, b.y, sc)
+            dx, dy = pb.x() - pa.x(), pb.y() - pa.y()
+            length = math.hypot(dx, dy) or 1.0
+            nx, ny = -dy / length, dx / length
+            poly = [pa]
+            for i, v in enumerate(values):
+                f = i / max(1, len(values) - 1)
+                off = (v / peak) * 10.0
+                poly.append(
+                    QtCore.QPointF(pa.x() + dx * f + nx * off, pa.y() + dy * f + ny * off)
+                )
+            poly.append(pb)
+            p.addPolygon(QtGui.QPolygonF(poly))
+        stroker = QtGui.QPainterPathStroker()
+        stroker.setWidth(self.canvas.px(10.0))
+        return p + stroker.createStroke(p)
+
     def paint(self, painter, option, widget=None):
         _ = (option, widget)
         if not getattr(self.canvas, f"show_{self.kind}", False):
@@ -2226,6 +2257,39 @@ class DeflectionOverlay(QtWidgets.QGraphicsItem):
             (max(xs) - min(xs)) + 2 * pad,
             (max(ys) - min(ys)) + 2 * pad,
         )
+
+    def shape(self):
+        p = QtGui.QPainterPath()
+        res = getattr(self.canvas, "display_result", None)
+        if not res or not res.ok or not getattr(res, "displacements", None):
+            return p
+        model = self.canvas.model
+        sc = self.sc()
+        max_disp = 0.0
+        for nid, (ux, uy, _) in res.displacements.items():
+            disp = math.hypot(ux, uy)
+            if disp > max_disp:
+                max_disp = disp
+        if max_disp < 1e-9:
+            return p
+        target_px = 25.0 * sc
+        scale_factor = target_px / max_disp
+        for member in model.members.values():
+            a = model.nodes.get(member.start)
+            b = model.nodes.get(member.end)
+            if not a or not b:
+                continue
+            disp_a = res.displacements.get(a.id, (0, 0, 0))
+            disp_b = res.displacements.get(b.id, (0, 0, 0))
+            p_ax = a.x + disp_a[0] * scale_factor
+            p_ay = a.y + disp_a[1] * scale_factor
+            p_bx = b.x + disp_b[0] * scale_factor
+            p_by = b.y + disp_b[1] * scale_factor
+            p.moveTo(to_scene(p_ax, p_ay, sc))
+            p.lineTo(to_scene(p_bx, p_by, sc))
+        stroker = QtGui.QPainterPathStroker()
+        stroker.setWidth(self.canvas.px(24.0))
+        return stroker.createStroke(p)
 
     def paint(self, painter, option, widget=None):
         _ = (option, widget)
