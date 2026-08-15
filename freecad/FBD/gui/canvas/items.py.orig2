@@ -1460,16 +1460,8 @@ class ProjectionLinesOverlay(QtWidgets.QGraphicsItem):
         alignment = getattr(self.canvas, "diagram_alignment", {})
         positions = getattr(self.canvas, "diagram_positions", {})
 
-        # Guide lines have to live in the same coordinate system as the
-        # diagrams and the structure itself -- paper-space "scene" units,
-        # scaled by the sheet's own unit_scale -- not raw model
-        # millimetres, or a diagram sitting right on the structure would
-        # anchor its guide lines however far away unit_scale happens to
-        # put the raw numbers.
-        sc = self.sc()
-        node_pts = [to_scene(n.x, n.y, sc) for n in model.nodes.values()]
-        node_ys = [p.y() for p in node_pts]
-        node_xs = [p.x() for p in node_pts]
+        node_ys = [-n.y for n in model.nodes.values()]
+        node_xs = [n.x for n in model.nodes.values()]
         max_scene_y = max(node_ys, default=0.0)
         min_scene_y = min(node_ys, default=0.0)
         max_scene_x = max(node_xs, default=0.0)
@@ -1496,14 +1488,14 @@ class ProjectionLinesOverlay(QtWidgets.QGraphicsItem):
         pen.setCosmetic(True)
         painter.setPen(pen)
 
-        # Every joint and anchor's own scene position, scaled the same
-        # way as everything else on the page.
-        x_positions = list(zip(node_xs, node_ys))
+        # Collect all X positions (Nodes + Anchors)
+        x_positions = []
+        for n in model.nodes.values():
+            x_positions.append((n.x, -n.y))
         for a in model.anchors.values():
             xy = model.anchor_xy(a)
             if xy:
-                p = to_scene(xy[0], xy[1], sc)
-                x_positions.append((p.x(), p.y()))
+                x_positions.append((xy[0], -xy[1]))
 
         if vertical_offsets:
             farthest = max(vertical_offsets, key=abs)
@@ -1654,8 +1646,7 @@ class SingleDiagramOverlay(QtWidgets.QGraphicsItem):
         fill = {"moment": S.MOMENT_FILL, "shear": S.SHEAR_FILL, "axial": S.AXIAL_FILL}[self.kind]
         edge = {"moment": S.REACTION, "shear": S.INTERNAL, "axial": S.APPLIED}[self.kind]
 
-        pts_all = [to_scene(n.x, n.y, self.sc()) for n in model.nodes.values()]
-        node_ys = [p.y() for p in pts_all]
+        node_ys = [-n.y for n in model.nodes.values()]
         max_scene_y = max(node_ys, default=0.0)
         min_scene_y = min(node_ys, default=0.0)
 
@@ -1676,7 +1667,7 @@ class SingleDiagramOverlay(QtWidgets.QGraphicsItem):
         if is_zero:
             title += " (0)"
 
-        min_x = min((p.x() for p in pts_all), default=0.0)
+        min_x = min((n.x for n in model.nodes.values()), default=0.0)
 
         # Base line for members
         base_pen = QtGui.QPen(S.INK_LIGHT, 0.5)
@@ -2274,12 +2265,128 @@ class DeflectionOverlay(QtWidgets.QGraphicsItem):
 
         if self.canvas.diagram_alignment.get("deflection") == "overlay" \
                 and not self.canvas.diagram_user_dragged.get("deflection", False):
-            hint_pts = [to_scene(nd.x, nd.y, sc) for nd in model.nodes.values()]
-            if hint_pts:
-                hx = min(p.x() for p in hint_pts)
-                hy = min(p.y() for p in hint_pts)
+            xs = [nd.x for nd in model.nodes.values()]
+            ys = [-nd.y for nd in model.nodes.values()]
+            if xs:
                 px_text(
                     painter, self.canvas,
-                    QtCore.QPointF(hx, hy - self.canvas.px(14.0)),
+                    QtCore.QPointF(min(xs), min(ys) - self.canvas.px(14.0)),
                     "drag to move", QtGui.QColor("#8a94a6"), size_pt=9.0,
                 )
+
+
+class DiagramButtonsOverlay(QtWidgets.QGraphicsItem):
+    """Four small round buttons -- Axial, Shear, Moment, Deflect -- in an
+    equally spaced row below the structure, for switching each diagram on
+    or off. Purely on-page chrome: it never touches the model, and the
+    editor hides it for the length of a PDF export so it never ends up on
+    the sheet that gets printed.
+    """
+
+    KINDS = (
+        ("axial", S.APPLIED, "Axial"),
+        ("shear", S.INTERNAL, "Shear"),
+        ("moment", S.REACTION, "Moment"),
+        ("deflection", QtGui.QColor("#d81b60"), "Deflect"),
+    )
+    R = 14.0      # pixels: button radius
+    GAP = 42.0    # pixels: equal spacing between button centres
+
+    def __init__(self, canvas):
+        super().__init__()
+        self.canvas = canvas
+        self.setZValue(80)
+        self.setFlag(QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+        self.setAcceptHoverEvents(True)
+        self._hover_index = None
+
+    def sc(self):
+        model = getattr(self.canvas, "model", None)
+        sheet = getattr(model, "sheet", None) if model else None
+        return getattr(sheet, "unit_scale", 1.0) if sheet else 1.0
+
+    def _visible(self):
+        res = getattr(self.canvas, "display_result", None)
+        return bool(res and res.ok)
+
+    def sync(self):
+        visible = self._visible()
+        self.setVisible(visible)
+        if not visible:
+            return
+        model = self.canvas.model
+        if not model.nodes:
+            return
+        sc = self.sc()
+        pts = [to_scene(n.x, n.y, sc) for n in model.nodes.values()]
+        cx = (min(p.x() for p in pts) + max(p.x() for p in pts)) / 2.0
+        bottom = max(p.y() for p in pts)
+        self.setPos(QtCore.QPointF(cx, bottom + self.canvas.px(36.0)))
+
+    def _button_rects(self):
+        n = len(self.KINDS)
+        total_w = self.GAP * (n - 1)
+        start_x = -total_w / 2.0
+        out = []
+        for i, (kind, colour, label) in enumerate(self.KINDS):
+            cx = start_x + i * self.GAP
+            out.append((kind, colour, label, QtCore.QRectF(cx - self.R, -self.R, 2 * self.R, 2 * self.R)))
+        return out
+
+    def boundingRect(self):
+        n = len(self.KINDS)
+        w = self.GAP * (n - 1) + self.R * 2 + 16.0
+        h = self.R * 2 + 24.0
+        return QtCore.QRectF(-w / 2.0, -self.R - 4.0, w, h)
+
+    def paint(self, painter, option, widget=None):
+        if not self._visible():
+            return
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        for i, (kind, colour, label, rect) in enumerate(self._button_rects()):
+            on = bool(getattr(self.canvas, f"show_{kind}", False))
+            hovered = self._hover_index == i
+            painter.setPen(QtGui.QPen(colour if (on or hovered) else S.INK_LIGHT, 1.5))
+            painter.setBrush(colour if on else QtGui.QColor(255, 255, 255, 235))
+            painter.drawEllipse(rect)
+            painter.setFont(S.font(13.0, bold=True))
+            painter.setPen(QtGui.QPen(QtGui.QColor("#ffffff") if on else colour))
+            painter.drawText(rect, int(QtCore.Qt.AlignmentFlag.AlignCenter), "-" if on else "+")
+            painter.setFont(S.font(8.5))
+            painter.setPen(QtGui.QPen(S.INK_LIGHT))
+            painter.drawText(
+                QtCore.QRectF(rect.left() - 20.0, rect.bottom() + 2.0, rect.width() + 40.0, 12.0),
+                int(QtCore.Qt.AlignmentFlag.AlignHCenter | QtCore.Qt.AlignmentFlag.AlignTop),
+                label,
+            )
+
+    def hoverMoveEvent(self, event):
+        hit = None
+        for i, (_kind, _colour, _label, rect) in enumerate(self._button_rects()):
+            if rect.contains(event.pos()):
+                hit = i
+                break
+        if hit != self._hover_index:
+            self._hover_index = hit
+            self.update()
+        self.setCursor(
+            QtCore.Qt.CursorShape.PointingHandCursor if hit is not None
+            else QtCore.Qt.CursorShape.ArrowCursor
+        )
+        super().hoverMoveEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self._hover_index = None
+        self.update()
+        super().hoverLeaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.MouseButton.LeftButton:
+            for kind, _colour, _label, rect in self._button_rects():
+                if rect.contains(event.pos()):
+                    toggle = getattr(self.canvas, f"toggle_{kind}", None)
+                    if callable(toggle):
+                        toggle()
+                    event.accept()
+                    return
+        super().mousePressEvent(event)

@@ -1174,50 +1174,22 @@ def _overlay_bounds(canvas) -> QtCore.QRectF:
         bounds = QtCore.QRectF(QtCore.QPointF(min(xs), min(ys)), QtCore.QPointF(max(xs), max(ys)))
         rect = rect.united(bounds)
 
-        # Each diagram sits wherever it was dropped rather than in a fixed
-        # stack, so fold in its actual position instead of assuming one.
-        positions = getattr(canvas, "diagram_positions", {}) or {}
-        for kind, pos in positions.items():
-            if pos is None or not getattr(canvas, f"show_{kind}", False):
-                continue
-            rect = rect.united(bounds.translated(pos[0], pos[1]))
+        active_diagrams = sum(
+            [
+                getattr(canvas, "show_axial", False),
+                getattr(canvas, "show_shear", False),
+                getattr(canvas, "show_moment", False),
+            ]
+        )
+        if active_diagrams > 0 and not getattr(canvas, "diagrams_overlay", False):
+            height = max(ys) - min(ys)
+            offset_y = (height + 20.0) * active_diagrams
+            rect = rect.united(bounds.translated(0, offset_y))
 
         if getattr(canvas, "results_table_pos", None):
             rect = rect.united(QtCore.QRectF(canvas.results_table_pos, QtCore.QSizeF(300, 300)))
 
     return rect.adjusted(-120, -120, 120, 120)
-
-
-def _snap_diagram_offset(canvas, point):
-    """Where a dragged diagram settles.
-
-    Close to the structure's own x -- directly above or below it -- locks
-    to x = 0 and keeps sliding vertically. Close to its own y -- directly
-    beside it -- locks to y = 0 and keeps sliding horizontally. Close to
-    both at once locks straight onto the structure. Anywhere else, it's
-    free. The catch radius is generous on purpose: this is meant to catch
-    a rough drag, not demand a pixel-perfect one.
-    """
-    threshold = canvas.px(20.0)
-    x, y = point.x(), point.y()
-    near_x = abs(x) <= threshold
-    near_y = abs(y) <= threshold
-    if near_x and near_y:
-        return QtCore.QPointF(0.0, 0.0), "overlay"
-    if near_x:
-        return QtCore.QPointF(0.0, y), "vertical"
-    if near_y:
-        return QtCore.QPointF(x, 0.0), "horizontal"
-    return QtCore.QPointF(x, y), "free"
-
-
-# Cursor for whichever kind of placement a drag is currently headed for.
-_DRAG_CURSORS = {
-    "overlay": QtCore.Qt.CursorShape.PointingHandCursor,
-    "vertical": QtCore.Qt.CursorShape.SizeVerCursor,
-    "horizontal": QtCore.Qt.CursorShape.SizeHorCursor,
-    "free": QtCore.Qt.CursorShape.ClosedHandCursor,
-}
 
 
 class ResultOverlay(QtWidgets.QGraphicsItem):
@@ -1423,13 +1395,7 @@ class StructureBoundsOverlay(QtWidgets.QGraphicsItem):
 
 
 class ProjectionLinesOverlay(QtWidgets.QGraphicsItem):
-    """Dashed guide lines from every joint to a diagram lined up with the
-    structure -- straight down when the diagram is locked to the same x,
-    straight across when it's locked to the same y. Nothing is drawn for a
-    diagram sitting right on the structure, or one left free-floating
-    somewhere else on the page: a guide line's whole job is showing what a
-    diagram is aligned with, and neither of those is aligned with anything.
-    """
+    """Vertical dashed gray guide lines from joints/points extending down past diagrams."""
 
     def __init__(self, canvas):
         super().__init__()
@@ -1437,7 +1403,7 @@ class ProjectionLinesOverlay(QtWidgets.QGraphicsItem):
         self.setZValue(2)
         self.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
 
-    def sc(self):
+    def sc(self) -> float:
         sheet = getattr(getattr(self.canvas, "model", None), "sheet", None)
         return getattr(sheet, "unit_scale", 1.0) or 1.0
 
@@ -1445,50 +1411,29 @@ class ProjectionLinesOverlay(QtWidgets.QGraphicsItem):
         return _overlay_bounds(self.canvas)
 
     def paint(self, painter, option, widget=None):
+        is_overlay = getattr(self.canvas, "diagrams_overlay", False)
         res = getattr(self.canvas, "display_result", None)
         active_kinds = [
-            k for k in ("axial", "shear", "moment", "deflection")
-            if getattr(self.canvas, f"show_{k}", False)
+            k for k in ("axial", "shear", "moment") if getattr(self.canvas, f"show_{k}", False)
         ]
-        if not active_kinds or not res or not res.ok:
+
+        if is_overlay or not active_kinds or not res or not res.ok:
             return
 
         model = self.canvas.model
         if not model.nodes:
             return
 
-        alignment = getattr(self.canvas, "diagram_alignment", {})
-        positions = getattr(self.canvas, "diagram_positions", {})
-
-        # Guide lines have to live in the same coordinate system as the
-        # diagrams and the structure itself -- paper-space "scene" units,
-        # scaled by the sheet's own unit_scale -- not raw model
-        # millimetres, or a diagram sitting right on the structure would
-        # anchor its guide lines however far away unit_scale happens to
-        # put the raw numbers.
-        sc = self.sc()
-        node_pts = [to_scene(n.x, n.y, sc) for n in model.nodes.values()]
-        node_ys = [p.y() for p in node_pts]
-        node_xs = [p.x() for p in node_pts]
+        # Compute bottom extent across all active diagrams
+        max_diagram_y = -1e9
+        node_ys = [-n.y for n in model.nodes.values()]
         max_scene_y = max(node_ys, default=0.0)
-        min_scene_y = min(node_ys, default=0.0)
-        max_scene_x = max(node_xs, default=0.0)
-        min_scene_x = min(node_xs, default=0.0)
 
-        vertical_offsets = []
-        horizontal_offsets = []
         for k in active_kinds:
-            pos = positions.get(k)
-            if pos is None:
-                continue
-            mode = alignment.get(k)
-            if mode == "vertical":
-                vertical_offsets.append(pos[1])
-            elif mode == "horizontal":
-                horizontal_offsets.append(pos[0])
-
-        if not vertical_offsets and not horizontal_offsets:
-            return
+            diag_item = self.canvas.diagram_overlays.get(k)
+            if diag_item:
+                y = diag_item.pos().y()
+                max_diagram_y = max(max_diagram_y, y + max_scene_y + 15.0)
 
         painter.save()
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, False)
@@ -1496,28 +1441,18 @@ class ProjectionLinesOverlay(QtWidgets.QGraphicsItem):
         pen.setCosmetic(True)
         painter.setPen(pen)
 
-        # Every joint and anchor's own scene position, scaled the same
-        # way as everything else on the page.
-        x_positions = list(zip(node_xs, node_ys))
+        # Collect all X positions (Nodes + Anchors)
+        x_positions = []
+        for n in model.nodes.values():
+            x_positions.append((n.x, -n.y))
         for a in model.anchors.values():
             xy = model.anchor_xy(a)
             if xy:
-                p = to_scene(xy[0], xy[1], sc)
-                x_positions.append((p.x(), p.y()))
+                x_positions.append((xy[0], -xy[1]))
 
-        if vertical_offsets:
-            farthest = max(vertical_offsets, key=abs)
-            target_y = (max_scene_y + farthest + 15.0) if farthest >= 0 \
-                else (min_scene_y + farthest - 15.0)
-            for x, start_y in x_positions:
-                painter.drawLine(QtCore.QPointF(x, start_y), QtCore.QPointF(x, target_y))
-
-        if horizontal_offsets:
-            farthest = max(horizontal_offsets, key=abs)
-            target_x = (max_scene_x + farthest + 15.0) if farthest >= 0 \
-                else (min_scene_x + farthest - 15.0)
-            for x, start_y in x_positions:
-                painter.drawLine(QtCore.QPointF(x, start_y), QtCore.QPointF(target_x, start_y))
+        for x, start_y in x_positions:
+            if max_diagram_y > start_y:
+                painter.drawLine(QtCore.QPointF(x, start_y), QtCore.QPointF(x, max_diagram_y))
 
         painter.restore()
 
@@ -1526,12 +1461,7 @@ class SingleDiagramOverlay(QtWidgets.QGraphicsItem):
     def sc(self):
         return getattr(self.canvas, "global_scale", 1.0)
 
-    """A draggable internal force diagram (Axial, Shear, or Moment).
-
-    Free to drop anywhere on the page. See _snap_diagram_offset for how it
-    locks onto the structure's own axes -- or straight onto the structure
-    itself -- once it gets close.
-    """
+    """Independently draggable internal force diagram (Axial, Shear, or Moment)."""
 
     def __init__(self, canvas, kind):
         super().__init__()
@@ -1542,8 +1472,7 @@ class SingleDiagramOverlay(QtWidgets.QGraphicsItem):
         self._hover = False
         self._setting_pos = False
         self.setFlag(QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
-        self.setFlag(QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
-        self.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
+        self.setCursor(QtCore.Qt.CursorShape.SizeVerCursor)
 
     def hoverEnterEvent(self, event):
         self._hover = True
@@ -1556,38 +1485,58 @@ class SingleDiagramOverlay(QtWidgets.QGraphicsItem):
         super().hoverLeaveEvent(event)
 
     def sync_pos(self):
-        """Wherever this diagram was last dropped, or straight onto the
-        structure the first time it is switched on."""
-        self.setFlag(QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
-        stored = self.canvas.diagram_positions.get(self.kind)
-        if stored is None:
-            stored = (0.0, 0.0)
-            self.canvas.diagram_positions[self.kind] = stored
-            self.canvas.diagram_alignment[self.kind] = "overlay"
-        self._setting_pos = True
-        self.setPos(*stored)
-        self._setting_pos = False
+        is_overlay = getattr(self.canvas, "diagrams_overlay", False)
+        if is_overlay:
+            self.setFlag(QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+            self._setting_pos = True
+            self.setPos(0, 0)
+            self._setting_pos = False
+        else:
+            self.setFlag(QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
+            if self.canvas.diagram_user_dragged.get(self.kind, False):
+                curr_y = self.canvas.diagram_offsets.get(self.kind, 0.0)
+                self._setting_pos = True
+                self.setPos(0, curr_y)
+                self._setting_pos = False
+            else:
+                model = self.canvas.model
+                node_ys = [-n.y for n in model.nodes.values()] if model.nodes else [0.0]
+                max_scene_y = max(node_ys, default=0.0)
+                min_scene_y = min(node_ys, default=0.0)
+                structure_h = max_scene_y - min_scene_y
+
+                # Guaranteed unique index for each active diagram
+                active = [
+                    k
+                    for k in ("axial", "shear", "moment")
+                    if getattr(self.canvas, f"show_{k}", False)
+                ]
+                order = [
+                    k for k in getattr(self.canvas, "diagram_activation_order", []) if k in active
+                ]
+                for k in active:
+                    if k not in order:
+                        order.append(k)
+
+                idx = order.index(self.kind) if self.kind in order else 0
+                step = max(structure_h, 15.0) + 20.0
+                auto_y = (structure_h + 20.0) + idx * step
+
+                self.canvas.diagram_offsets[self.kind] = auto_y
+                self._setting_pos = True
+                self.setPos(0, auto_y)
+                self._setting_pos = False
 
     def itemChange(self, change, value):
         if change == QtWidgets.QGraphicsItem.GraphicsItemChange.ItemPositionChange and self.scene():
             if not getattr(self, "_setting_pos", False):
-                snapped, alignment = _snap_diagram_offset(self.canvas, value)
-                self.canvas.diagram_user_dragged[self.kind] = True
-                self.canvas.diagram_positions[self.kind] = (snapped.x(), snapped.y())
-                self.canvas.diagram_alignment[self.kind] = alignment
-                self.setCursor(_DRAG_CURSORS.get(alignment, QtCore.Qt.CursorShape.ClosedHandCursor))
-                try:
-                    self.canvas.projection_overlay.update()
-                except RuntimeError:
-                    pass
-                return snapped
+                is_overlay = getattr(self.canvas, "diagrams_overlay", False)
+                if not is_overlay:
+                    # User manually dragged this item!
+                    self.canvas.diagram_user_dragged[self.kind] = True
+                    self.canvas.diagram_offsets[self.kind] = value.y()
+                    return QtCore.QPointF(0.0, value.y())
         return super().itemChange(change, value)
-
-    def mouseReleaseEvent(self, event):
-        super().mouseReleaseEvent(event)
-        self.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
-        self.canvas.save()
-        self.canvas.notify()
 
     def boundingRect(self):
         if not getattr(self.canvas, f"show_{self.kind}", False):
@@ -1654,8 +1603,7 @@ class SingleDiagramOverlay(QtWidgets.QGraphicsItem):
         fill = {"moment": S.MOMENT_FILL, "shear": S.SHEAR_FILL, "axial": S.AXIAL_FILL}[self.kind]
         edge = {"moment": S.REACTION, "shear": S.INTERNAL, "axial": S.APPLIED}[self.kind]
 
-        pts_all = [to_scene(n.x, n.y, self.sc()) for n in model.nodes.values()]
-        node_ys = [p.y() for p in pts_all]
+        node_ys = [-n.y for n in model.nodes.values()]
         max_scene_y = max(node_ys, default=0.0)
         min_scene_y = min(node_ys, default=0.0)
 
@@ -1668,7 +1616,7 @@ class SingleDiagramOverlay(QtWidgets.QGraphicsItem):
             default=0.0,
         )
         is_zero = peak < 1e-12
-        is_overlay = self.canvas.diagram_alignment.get(self.kind) == "overlay"
+        is_overlay = getattr(self.canvas, "diagrams_overlay", False)
 
         painter.save()
 
@@ -1676,7 +1624,7 @@ class SingleDiagramOverlay(QtWidgets.QGraphicsItem):
         if is_zero:
             title += " (0)"
 
-        min_x = min((p.x() for p in pts_all), default=0.0)
+        min_x = min((n.x for n in model.nodes.values()), default=0.0)
 
         # Base line for members
         base_pen = QtGui.QPen(S.INK_LIGHT, 0.5)
@@ -1704,13 +1652,6 @@ class SingleDiagramOverlay(QtWidgets.QGraphicsItem):
                 centre=True,
             )
             painter.restore()
-
-        if is_overlay and not self.canvas.diagram_user_dragged.get(self.kind, False):
-            px_text(
-                painter, self.canvas,
-                QtCore.QPointF(min_x, min_scene_y - self.canvas.px(14.0)),
-                "drag to move", S.INK_LIGHT, size_pt=9.0, centre=False,
-            )
 
         if is_zero:
             # Explicitly label zero on members
@@ -2105,82 +2046,21 @@ class DiagramResizeOverlay(QtWidgets.QGraphicsItem):
 
 
 class DeflectionOverlay(QtWidgets.QGraphicsItem):
-    """Draws the elastically deflected shape of the structure. Draggable
-    the same way the force diagrams are -- see _snap_diagram_offset.
-    """
+    """Draws the elastically deflected shape of the structure."""
 
     def __init__(self, canvas):
         super().__init__()
         self.canvas = canvas
-        self.kind = "deflection"
         self.setZValue(44)
-        self.setAcceptHoverEvents(True)
-        self._hover = False
-        self._setting_pos = False
-        self.setFlag(QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
-        self.setFlag(QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
-        self.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
+        self.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
 
     def sc(self):
         model = getattr(self.canvas, "model", None)
         sheet = getattr(model, "sheet", None) if model else None
         return getattr(sheet, "unit_scale", 1.0) if sheet else 1.0
 
-    def sync_pos(self):
-        self.setFlag(QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
-        stored = self.canvas.diagram_positions.get(self.kind)
-        if stored is None:
-            stored = (0.0, 0.0)
-            self.canvas.diagram_positions[self.kind] = stored
-            self.canvas.diagram_alignment[self.kind] = "overlay"
-        self._setting_pos = True
-        self.setPos(*stored)
-        self._setting_pos = False
-
-    def itemChange(self, change, value):
-        if change == QtWidgets.QGraphicsItem.GraphicsItemChange.ItemPositionChange and self.scene():
-            if not getattr(self, "_setting_pos", False):
-                snapped, alignment = _snap_diagram_offset(self.canvas, value)
-                self.canvas.diagram_user_dragged[self.kind] = True
-                self.canvas.diagram_positions[self.kind] = (snapped.x(), snapped.y())
-                self.canvas.diagram_alignment[self.kind] = alignment
-                self.setCursor(_DRAG_CURSORS.get(alignment, QtCore.Qt.CursorShape.ClosedHandCursor))
-                try:
-                    self.canvas.projection_overlay.update()
-                except RuntimeError:
-                    pass
-                return snapped
-        return super().itemChange(change, value)
-
-    def hoverEnterEvent(self, event):
-        self._hover = True
-        self.update()
-        super().hoverEnterEvent(event)
-
-    def hoverLeaveEvent(self, event):
-        self._hover = False
-        self.update()
-        super().hoverLeaveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        super().mouseReleaseEvent(event)
-        self.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
-        self.canvas.save()
-        self.canvas.notify()
-
     def boundingRect(self):
-        model = getattr(self.canvas, "model", None)
-        if not model or not model.nodes:
-            return QtCore.QRectF()
-        sc = self.sc()
-        pts = [to_scene(n.x, n.y, sc) for n in model.nodes.values()]
-        xs = [p.x() for p in pts]
-        ys = [p.y() for p in pts]
-        pad = self.canvas.px(40.0)
-        return QtCore.QRectF(
-            min(xs) - pad, min(ys) - pad,
-            (max(xs) - min(xs)) + 2 * pad, (max(ys) - min(ys)) + 2 * pad,
-        )
+        return _overlay_bounds(self.canvas)
 
     def paint(self, painter, option, widget=None):
         if not getattr(self.canvas, "show_deflection", False):
@@ -2228,11 +2108,11 @@ class DeflectionOverlay(QtWidgets.QGraphicsItem):
             if L_orig > 1e-9:
                 ux, uy = orig_dx / L_orig, orig_dy / L_orig
                 nx, ny = -uy, ux
-
+                
                 uA = disp_a[0]*ux + disp_a[1]*uy
                 vA = disp_a[0]*nx + disp_a[1]*ny
                 thetaA = -disp_a[2] # AnaStruct is CW, Hermite is CCW
-
+                
                 uB = disp_b[0]*ux + disp_b[1]*uy
                 vB = disp_b[0]*nx + disp_b[1]*ny
                 thetaB = -disp_b[2]
@@ -2245,11 +2125,11 @@ class DeflectionOverlay(QtWidgets.QGraphicsItem):
                     h10 = t**3 - 2*t**2 + t
                     h01 = -2*t**3 + 3*t**2
                     h11 = t**3 - t**2
-
-                    v_t = (h00 * (vA * scale_factor) + h10 * (thetaA * scale_factor * L_orig)
-                           + h01 * (vB * scale_factor) + h11 * (thetaB * scale_factor * L_orig))
+                    
+                    v_t = h00*(vA*scale_factor) + h10*(thetaA*scale_factor*L_orig) + \
+                          h01*(vB*scale_factor) + h11*(thetaB*scale_factor*L_orig)
                     u_t = (1-t)*(uA*scale_factor) + t*(uB*scale_factor)
-
+                    
                     x_l, y_l = t*L_orig + u_t, v_t
                     x_g, y_g = a.x + x_l*ux + y_l*nx, a.y + x_l*uy + y_l*ny
                     poly.append(to_scene(x_g, y_g, sc))
@@ -2269,17 +2149,5 @@ class DeflectionOverlay(QtWidgets.QGraphicsItem):
             if n:
                 d_v = res.displacements[max_node]
                 pt = to_scene(n.x + d_v[0]*scale_factor, n.y + d_v[1]*scale_factor, sc)
-                px_text(painter, self.canvas, pt, f"Max Deflection: {fmt(max_disp, 'mm')}",
+                px_text(painter, self.canvas, pt, f"Max Deflection: {fmt(max_disp, 'mm')}", 
                         QtGui.QColor("#d81b60"), size_pt=11.0, dy=-12.0)
-
-        if self.canvas.diagram_alignment.get("deflection") == "overlay" \
-                and not self.canvas.diagram_user_dragged.get("deflection", False):
-            hint_pts = [to_scene(nd.x, nd.y, sc) for nd in model.nodes.values()]
-            if hint_pts:
-                hx = min(p.x() for p in hint_pts)
-                hy = min(p.y() for p in hint_pts)
-                px_text(
-                    painter, self.canvas,
-                    QtCore.QPointF(hx, hy - self.canvas.px(14.0)),
-                    "drag to move", QtGui.QColor("#8a94a6"), size_pt=9.0,
-                )

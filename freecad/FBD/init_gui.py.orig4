@@ -31,11 +31,6 @@ class FBDWorkbench(Gui.Workbench):
             "FBD_DiagramAxial", "FBD_DiagramShear",
             "FBD_DiagramMoment", "FBD_DiagramDeflection",
         ]
-        self.display = [
-            "FBD_ToggleLabels", "FBD_ToggleComponents", "FBD_ToggleReactions",
-            "FBD_ToggleSchedule", "FBD_ToggleGraph", "FBD_ToggleResultsTable",
-            "FBD_ToggleSheet",
-        ]
         self.view = ["FBD_ToggleSnap", "FBD_FitView"]
         self.output = ["FBD_ExportPDF"]
 
@@ -44,7 +39,7 @@ class FBDWorkbench(Gui.Workbench):
         self.appendToolbar(
             "FBD",
             self.document + self.draw + self.supports + self.loads + self.mechanism
-            + self.analysis + self.diagrams + self.display + self.view + self.output,
+            + self.analysis + self.diagrams + self.view + self.output,
         )
 
         self.appendMenu("FBD", self.document + self.output)
@@ -54,7 +49,6 @@ class FBDWorkbench(Gui.Workbench):
         self.appendMenu(["FBD", "Mechanism"], self.mechanism)
         self.appendMenu(["FBD", "Analysis"], self.analysis)
         self.appendMenu(["FBD", "Diagrams"], self.diagrams)
-        self.appendMenu(["FBD", "Display"], self.display)
         self.appendMenu(["FBD", "View"], self.view)
 
     def Activated(self):
@@ -70,17 +64,13 @@ class FBDWorkbench(Gui.Workbench):
         during Initialize, and the actions do not exist before that finishes.
         """
         from PySide6 import QtCore
-        from .gui.commands import (
-            sync_tool_actions, sync_diagram_actions, sync_hud_actions, ensure_motion_widget,
-        )
+        from .gui.commands import sync_tool_actions, sync_diagram_actions
         from .gui.editor_host import active_editor
 
         def sync():
-            ensure_motion_widget()
             editor = active_editor()
             sync_tool_actions(editor.current_tool_name() if editor else None)
             sync_diagram_actions()
-            sync_hud_actions()
 
         QtCore.QTimer.singleShot(0, sync)
 

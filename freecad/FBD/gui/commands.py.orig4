@@ -2,7 +2,7 @@ import os
 
 import FreeCAD as App  # type: ignore
 import FreeCADGui as Gui  # type: ignore
-from PySide6 import QtCore, QtGui, QtWidgets  # type: ignore
+from PySide6 import QtWidgets  # type: ignore
 
 from . import document as doc_mod
 
@@ -222,94 +222,6 @@ class DiagramDeflection(_DiagramToggleCommand):
     kind = "deflection"
 
 
-class _HUDToggleCommand(_Command):
-    """A toolbar toggle mirroring one of the editor's plain on/off
-    display settings -- Labels, Components, Reactions, and so on -- kept
-    in sync via sync_hud_actions() the same way the drawing tools are
-    kept in sync via sync_tool_actions().
-    """
-
-    attr = ""     # editor attribute read for the checked state
-    default = False
-    toggle = ""   # editor method name this button calls
-
-    def IsActive(self):
-        return active_editor() is not None
-
-    def GetResources(self):
-        res = super().GetResources()
-        res["Checkable"] = True
-        return res
-
-    def Activated(self, checked=False):
-        del checked
-        editor = active_editor()
-        if editor is None:
-            return
-        method = getattr(editor, self.toggle, None)
-        if callable(method):
-            method()
-        sync_hud_actions()
-
-
-class ToggleLabels(_HUDToggleCommand):
-    icon = "tool_hud_labels.svg"
-    text = "Labels"
-    tip = "Show or hide joint labels."
-    attr = "show_labels"
-    toggle = "toggle_labels"
-
-
-class ToggleComponents(_HUDToggleCommand):
-    icon = "tool_hud_components.svg"
-    text = "Components"
-    tip = "Show forces as separate Fx/Fy arrows instead of one angled arrow."
-    attr = "show_components"
-    toggle = "toggle_components"
-
-
-class ToggleReactions(_HUDToggleCommand):
-    icon = "tool_hud_reactions.svg"
-    text = "Reactions"
-    tip = "Show or hide solved reactions."
-    attr = "show_reactions"
-    toggle = "toggle_reactions"
-
-
-class ToggleSchedule(_HUDToggleCommand):
-    icon = "tool_hud_schedule.svg"
-    text = "Schedule"
-    tip = "Choreograph when each driver runs."
-    attr = "show_schedule"
-    toggle = "toggle_schedule"
-
-
-class ToggleGraph(_HUDToggleCommand):
-    icon = "tool_hud_graph.svg"
-    text = "Graph"
-    tip = "Effort against travel, for every driver at once."
-    attr = "show_graph"
-    toggle = "toggle_graph"
-
-
-class ToggleResultsTable(_HUDToggleCommand):
-    icon = "tool_hud_table.svg"
-    text = "Table"
-    tip = "Show or hide the results table."
-    attr = "show_results_table"
-    default = True
-    toggle = "toggle_results_table"
-
-
-class ToggleSheetBoundary(_HUDToggleCommand):
-    icon = "tool_hud_sheet.svg"
-    text = "Sheet"
-    tip = "Show or hide the paper sheet boundary."
-    attr = "show_sheet"
-    default = True
-    toggle = "toggle_sheet"
-
-
 class SyncSketch(_Command):
     icon = "fbd_import_sketch.svg"
     text = "Sync Sketch"
@@ -337,29 +249,16 @@ class RunMotion(_Command):
     icon = "fbd_motion.svg"
     text = "Run Motion"
     shortcut = "Space"
-    tip = "Run the mechanism and watch it move. Click again to clear."
+    tip = "Run the mechanism and watch it move."
 
     def IsActive(self):
         editor = active_editor()
-        return editor is not None and (editor.model.has_drivers()
-                                       or bool(getattr(editor, "motion_result", None)))
+        return editor is not None and editor.model.has_drivers()
 
-    def GetResources(self):
-        res = super().GetResources()
-        res["Checkable"] = True
-        return res
-
-    def Activated(self, checked=False):
+    def Activated(self):
         editor = active_editor()
-        if editor is None:
-            return
-        if checked:
-            if getattr(editor, "result", None):
-                editor.invalidate_result()
+        if editor is not None:
             editor.run_motion()
-        else:
-            editor.clear_motion()
-        sync_hud_actions()
 
 
 class FitView(_Command):
@@ -524,17 +423,12 @@ class ImportSketch(_Command):
 class SolveDiagram(_Command):
     icon = "fbd_solve.svg"
     text = "Solve"
-    tip = "Solve the open diagram and show the reactions. Click again to clear."
+    tip = "Solve the open diagram and show the reactions."
 
     def IsActive(self):
         return active_editor() is not None or bool(doc_mod.find_diagrams())
 
-    def GetResources(self):
-        res = super().GetResources()
-        res["Checkable"] = True
-        return res
-
-    def Activated(self, checked=False):
+    def Activated(self):
         editor = active_editor()
         if editor is None:
             diagrams = doc_mod.find_diagrams()
@@ -543,13 +437,7 @@ class SolveDiagram(_Command):
             from .editor_host import open_editor
 
             editor = open_editor(diagrams[0])
-        if checked:
-            if getattr(editor, "motion_result", None):
-                editor.clear_motion()
-            editor.solve()
-        else:
-            editor.clear_all()
-        sync_hud_actions()
+        editor.solve()
 
 
 class ExportPDF(_Command):
@@ -586,13 +474,6 @@ COMMANDS = {
     "FBD_DiagramShear": DiagramShear,
     "FBD_DiagramMoment": DiagramMoment,
     "FBD_DiagramDeflection": DiagramDeflection,
-    "FBD_ToggleLabels": ToggleLabels,
-    "FBD_ToggleComponents": ToggleComponents,
-    "FBD_ToggleReactions": ToggleReactions,
-    "FBD_ToggleSchedule": ToggleSchedule,
-    "FBD_ToggleGraph": ToggleGraph,
-    "FBD_ToggleResultsTable": ToggleResultsTable,
-    "FBD_ToggleSheet": ToggleSheetBoundary,
     "FBD_SyncSketch": SyncSketch,
     "FBD_RunMotion": RunMotion,
     "FBD_ToggleSnap": ToggleSnap,
@@ -662,153 +543,6 @@ def sync_diagram_actions():
                 act.setChecked(checked)
             finally:
                 act.blockSignals(False)
-
-
-# Play plus the time scrubber don't fit the plain-icon-button toolbar
-# pattern, so they're a small hand-built widget embedded directly in the
-# FBD toolbar instead of a registered Gui.Command. Every entry stays None
-# until ensure_motion_widget() has actually inserted it.
-_MOTION_WIDGET = {"toolbar": None, "play_btn": None, "slider": None, "label": None}
-
-
-def _set_checked(name, checked, enabled=None):
-    try:
-        action = Gui.Command.get(name).getAction()
-    except Exception:
-        return
-    actions = action if isinstance(action, (list, tuple)) else [action]
-    for act in actions:
-        if act is None:
-            continue
-        try:
-            act.blockSignals(True)
-            act.setChecked(bool(checked))
-            if enabled is not None:
-                act.setEnabled(bool(enabled))
-        finally:
-            act.blockSignals(False)
-
-
-def sync_hud_actions():
-    """Mirror the editor's current run/display state onto the toolbar:
-    Solve and Run Motion light up while their result is on screen, the
-    embedded Play button and scrubber track the motion clock, and the
-    plain display toggles match what's actually showing.
-    """
-    if not App.GuiUp:
-        return
-    editor = active_editor()
-
-    has_statics = bool(editor is not None and getattr(editor, "result", None)
-                       and editor.result.ok)
-    mot_res = getattr(editor, "motion_result", None) if editor is not None else None
-    has_mot = bool(mot_res and getattr(mot_res, "ok", False) and getattr(mot_res, "frames", None))
-    disp_res = getattr(editor, "display_result", None) if editor is not None else None
-    has_any_res = bool(disp_res is not None and getattr(disp_res, "ok", False))
-    has_drivers = bool(editor is not None and editor.model.has_drivers())
-
-    _set_checked("FBD_Solve", has_statics)
-    _set_checked("FBD_RunMotion", has_mot, enabled=(has_drivers or has_mot))
-
-    _set_checked("FBD_ToggleReactions",
-                bool(editor is not None and getattr(editor, "show_reactions", False)),
-                enabled=has_any_res)
-    _set_checked("FBD_ToggleResultsTable",
-                bool(getattr(editor, "show_results_table", True)) if editor is not None else True,
-                enabled=has_any_res)
-    _set_checked("FBD_ToggleGraph",
-                bool(editor is not None and getattr(editor, "show_graph", False)),
-                enabled=has_mot)
-    _set_checked("FBD_ToggleSchedule",
-                bool(editor is not None and getattr(editor, "show_schedule", False)),
-                enabled=has_drivers)
-    _set_checked("FBD_ToggleLabels",
-                bool(editor is not None and getattr(editor, "show_labels", False)))
-    _set_checked("FBD_ToggleComponents",
-                bool(editor is not None and getattr(editor, "show_components", False)))
-    _set_checked("FBD_ToggleSheet",
-                bool(getattr(editor, "show_sheet", True)) if editor is not None else True)
-
-    widget = _MOTION_WIDGET
-    if widget["play_btn"] is not None:
-        widget["play_btn"].blockSignals(True)
-        widget["play_btn"].setChecked(bool(editor is not None and getattr(editor, "playing", False)))
-        widget["play_btn"].setEnabled(has_mot)
-        widget["play_btn"].blockSignals(False)
-    if widget["slider"] is not None:
-        widget["slider"].setEnabled(has_mot)
-        if has_mot and editor is not None:
-            widget["slider"].blockSignals(True)
-            widget["slider"].setValue(
-                int(1000 * getattr(editor, "motion_time", 0.0) / max(1e-6, mot_res.duration))
-            )
-            widget["slider"].blockSignals(False)
-    if widget["label"] is not None:
-        t = getattr(editor, "motion_time", 0.0) if editor is not None else 0.0
-        widget["label"].setText(f"{t:.1f}s")
-
-
-def _on_play_clicked(checked):
-    del checked
-    editor = active_editor()
-    if editor is not None:
-        editor.toggle_play()
-    sync_hud_actions()
-
-
-def _on_slider_moved(value):
-    editor = active_editor()
-    if editor is None:
-        return
-    result = getattr(editor, "motion_result", None)
-    if result and getattr(result, "frames", None):
-        editor.set_motion_time(result.duration * value / 1000.0)
-
-
-def ensure_motion_widget():
-    """Embed Play plus the time scrubber into the FBD toolbar -- the one
-    piece of the old floating panel that doesn't fit a row of plain icon
-    buttons. Idempotent: does nothing once it's already there.
-    """
-    if not App.GuiUp or _MOTION_WIDGET["slider"] is not None:
-        return
-    mw = Gui.getMainWindow()
-    toolbar = None
-    for tb in mw.findChildren(QtWidgets.QToolBar):
-        if tb.windowTitle() == "FBD":
-            toolbar = tb
-            break
-    if toolbar is None:
-        return
-
-    container = QtWidgets.QWidget()
-    layout = QtWidgets.QHBoxLayout(container)
-    layout.setContentsMargins(6, 0, 4, 0)
-    layout.setSpacing(4)
-
-    play_btn = QtWidgets.QToolButton()
-    play_btn.setCheckable(True)
-    play_btn.setIcon(QtGui.QIcon(icon_path("tool_motion_play.svg")))
-    play_btn.setToolTip("Play or pause the current motion run.")
-    play_btn.setEnabled(False)
-    play_btn.clicked.connect(_on_play_clicked)
-    layout.addWidget(play_btn)
-
-    slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
-    slider.setMinimumWidth(120)
-    slider.setMaximumWidth(220)
-    slider.setRange(0, 1000)
-    slider.setEnabled(False)
-    slider.setToolTip("Scrub through the motion run.")
-    slider.valueChanged.connect(_on_slider_moved)
-    layout.addWidget(slider)
-
-    label = QtWidgets.QLabel("0.0s")
-    label.setMinimumWidth(38)
-    layout.addWidget(label)
-
-    toolbar.addWidget(container)
-    _MOTION_WIDGET.update(toolbar=toolbar, play_btn=play_btn, slider=slider, label=label)
 
 
 def register():

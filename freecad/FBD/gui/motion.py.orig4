@@ -1680,14 +1680,9 @@ class MotionController:
         try:
             self.motion_overlay.update()
             self.motion_graph.update()
+            self.hud.sync_state()
         except RuntimeError:
             self._motion_timer.stop()
-            return
-        try:
-            from .commands import sync_hud_actions
-            sync_hud_actions()
-        except Exception:
-            pass
 
     def motion_rows(self):
         """Motion results for the on-page table, in the same shape as statics."""
