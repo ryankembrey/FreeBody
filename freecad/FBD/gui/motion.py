@@ -284,10 +284,16 @@ class ActuatorItem(_Item):
                 # that would otherwise draw it upside down, so it always
                 # stays within +/-90 degrees of upright.
                 angle_deg = math.degrees(math.atan2(uy, ux))
+                flipped = False
                 if angle_deg > 90.0:
                     angle_deg -= 180.0
+                    flipped = True
                 elif angle_deg < -90.0:
                     angle_deg += 180.0
+                    flipped = True
+
+                # Prevent the text from physically jumping a full line-height when crossing vertical
+                vert_offset = 12.0 if flipped else 0.0
                 # Parallel text alongside a parallel line reads as touching
                 # at a gap that looked fine crossing it at an angle, so this
                 # sits noticeably further off than the un-rotated labels do.
@@ -301,6 +307,7 @@ class ActuatorItem(_Item):
                     colour,
                     12.0,
                     angle=angle_deg,
+                    dy=vert_offset,
                 )
 
     def _label(self, ac):
@@ -571,6 +578,15 @@ class MotionOverlay(QtWidgets.QGraphicsItem):
                 speed = math.hypot(*v)
                 if speed > best:
                     fastest, best = nid, speed
+            # Hysteresis: prevent the label from flickering wildly between joints with similar speeds
+            last_f = getattr(self, "_last_fastest", None)
+            if last_f is not None and last_f in frame.velocities:
+                last_speed = math.hypot(*frame.velocities[last_f])
+                if last_speed >= best * 0.90:  # Keep old fastest if it's within 10% of new best
+                    fastest = last_f
+                    best = last_speed
+            self._last_fastest = fastest
+
             if fastest is not None and best > 1e-6:
                 at = point(frame.positions[fastest])
                 px_text(
