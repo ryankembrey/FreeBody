@@ -165,6 +165,8 @@ class View(QtWidgets.QGraphicsView):
         if is_rmb:
             self._rmb_press_pos = pos
             self._rmb_panning = False
+            event.accept()
+            return
 
         if button == QtCore.Qt.MouseButton.LeftButton:
             scene_pos = self.mapToScene(pos)

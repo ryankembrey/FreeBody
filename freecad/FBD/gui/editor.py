@@ -639,10 +639,6 @@ class Editor(QtWidgets.QWidget, MotionController):
             self.view.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
         elif self._dragging_nodes:
             self.view.setCursor(QtCore.Qt.CursorShape.ClosedHandCursor)
-        elif self.tool.name == "Select" and (
-            self.node_near(scene_pos) is not None or self.member_near(scene_pos) is not None
-        ):
-            self.view.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
         else:
             self.view.setCursor(
                 QtCore.Qt.CursorShape.ArrowCursor
@@ -705,6 +701,7 @@ class Editor(QtWidgets.QWidget, MotionController):
         self._drag_start_mouse_pos = (0.0, 0.0)
         self._drag_initial_positions = {}
         self._drag_started = False
+        self.view.unsetCursor()
 
     def item_at(self, scene_pos):
         """Find entity item under scene_pos using screen-pixel tolerance."""
