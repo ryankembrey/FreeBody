@@ -110,118 +110,196 @@ class TreeSelectionObserver:
         return None, None
 
 
-class DisplayHUD(QtWidgets.QFrame):
-    """Sleek, floating interactive UI palette overlaid on the canvas."""
 
+
+
+
+class UnifiedHUD(QtWidgets.QFrame):
     def __init__(self, editor):
         super().__init__()
         self.editor = editor
         self.setObjectName("HUD")
         self.setStyleSheet("""
             QFrame#HUD {
-                background-color: rgba(255, 255, 255, 240);
+                background-color: rgba(255, 255, 255, 245);
                 border: 1px solid #c3c8d2;
                 border-radius: 8px;
             }
             QPushButton {
-                background: transparent;
-                border: none;
-                border-radius: 5px;
-                padding: 6px 12px;
-                color: #5b6270;
-                font-weight: bold;
-                font-family: "DejaVu Sans", sans-serif;
-                font-size: 11px;
+                background: transparent; border: none; border-radius: 5px;
+                padding: 4px 8px; color: #5b6270; font-weight: bold;
+                font-family: "DejaVu Sans", sans-serif; font-size: 11px;
             }
-            QPushButton:hover {
-                background: rgba(0, 0, 0, 12);
-                color: #1d2025;
+            QPushButton:hover { background: rgba(0, 0, 0, 12); color: #1d2025; }
+            QPushButton:checked { background: #e3f2fd; color: #1565c0; }
+            QPushButton#Run { color: #1565c0; }
+            QPushButton#Run:hover { background: #e3f2fd; }
+            QPushButton:disabled { color: #b8bec9; }
+            QComboBox {
+                background: transparent; border: 1px solid #c3c8d2; border-radius: 4px;
+                padding: 2px 4px; color: #5b6270; font-weight: bold; font-size: 10px;
             }
-            QPushButton:checked {
-                background: #e3f2fd;
-                color: #1565c0;
+            QLabel { color: #5b6270; font-size: 11px; font-weight: bold; }
+            QSlider::groove:horizontal { height: 3px; background: #c3c8d2; }
+            QSlider::handle:horizontal {
+                background: #00897b; width: 11px; margin: -5px 0; border-radius: 5px;
             }
-            QPushButton:disabled {
-                color: #b8bec9;
-            }
-            QFrame#separator {
-                background: #c3c8d2;
-                min-width: 1px;
-                max-width: 1px;
-                margin: 6px 4px;
-            }
+            QFrame#separator { background: #c3c8d2; min-width: 1px; max-width: 1px; margin: 4px 6px; }
         """)
 
         layout = QtWidgets.QHBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setContentsMargins(10, 4, 10, 4)
         layout.setSpacing(2)
-
-        def make_btn(text, tooltip, callback):
+        
+        def make_btn(text, tooltip, callback, checkable=True, is_run=False):
             btn = QtWidgets.QPushButton(text)
             btn.setToolTip(tooltip)
-            btn.setCheckable(True)
-            btn.clicked.connect(lambda _checked=False, cb=callback: cb())
+            btn.setCheckable(checkable)
+            if is_run: btn.setObjectName("Run")
+            btn.clicked.connect(lambda checked, cb=callback: cb(checked))
             layout.addWidget(btn)
             return btn
+            
+        def sep():
+            s = QtWidgets.QFrame()
+            s.setObjectName("separator")
+            layout.addWidget(s)
 
-        self.btn_lbl = make_btn("Labels", "Toggle Joint Labels", editor.toggle_labels)
-        self.btn_rxn = make_btn("Reactions", "Toggle Reactions", editor.toggle_reactions)
-        self.btn_tbl = make_btn("Table", "Toggle Results Table", editor.toggle_results_table)
-        self.btn_comp = make_btn(
-            "Components", "Show forces as separate X and Y arrows", editor.toggle_components
-        )
+        # 1. Action Toggles
+        self.btn_run_static = make_btn("Static", "Run/Clear static analysis", self._toggle_static, is_run=True)
+        self.btn_run_motion = make_btn("Motion", "Run/Clear motion simulation", self._toggle_motion, is_run=True)
+        sep()
 
-        sep1 = QtWidgets.QFrame()
-        sep1.setObjectName("separator")
-        layout.addWidget(sep1)
+        # 2. Motion Transport
+        self.btn_play = make_btn("Play", "Play/Pause animation", lambda _: editor.toggle_play())
+        self.slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.slider.setMinimumWidth(100)
+        self.slider.setRange(0, 1000)
+        self.slider.valueChanged.connect(self._on_scrub)
+        layout.addWidget(self.slider)
+        
+        self.lbl_time = QtWidgets.QLabel("0.0s")
+        self.lbl_time.setMinimumWidth(35)
+        layout.addWidget(self.lbl_time)
+        
+        self.btn_schedule = make_btn("Schedule", "Choreograph drivers", lambda _: editor.toggle_schedule())
+        sep()
 
-        self.btn_ax = make_btn("Axial", "Axial Force Diagram", editor.toggle_axial)
-        self.btn_sh = make_btn("Shear", "Shear Force Diagram", editor.toggle_shear)
-        self.btn_mo = make_btn("Moment", "Bending Moment Diagram", editor.toggle_moment)
-        self.btn_defl = make_btn("Deflect", "Deflected Shape", editor.toggle_deflection)
-        self.btn_ov = make_btn(
-            "Overlay", "Overlay Diagrams on Structure", editor.toggle_diagrams_overlay
-        )
+        # 3. View Toggles
+        self.btn_lbl = make_btn("Labels", "Toggle Joint Labels", lambda _: editor.toggle_labels())
+        self.btn_comp = make_btn("Components", "Show force X/Y arrows", lambda _: editor.toggle_components())
+        self.btn_rxn = make_btn("Reactions", "Toggle Reactions", lambda _: editor.toggle_reactions())
+        sep()
 
-        sep2 = QtWidgets.QFrame()
-        sep2.setObjectName("separator")
-        layout.addWidget(sep2)
+        # 4. Analysis Overlays
+        self.btn_graph = make_btn("Graph", "Effort curve", lambda _: editor.toggle_graph())
+        self.btn_tbl = make_btn("Table", "Results Table", lambda _: editor.toggle_results_table())
+        
+        layout.addWidget(QtWidgets.QLabel("Diagram:"))
+        self.combo_diag = QtWidgets.QComboBox()
+        self.combo_diag.addItems(["None", "Axial", "Shear", "Moment", "Deflect"])
+        self.combo_diag.currentIndexChanged.connect(self._on_diag_change)
+        layout.addWidget(self.combo_diag)
+        
+        self.btn_ov = make_btn("Overlay", "Overlay on Structure", lambda _: editor.toggle_diagrams_overlay())
+        sep()
 
-        self.btn_sheet = make_btn("Sheet", "Toggle Paper Sheet Boundary", editor.toggle_sheet)
+        # 5. Environment
+        self.btn_sheet = make_btn("Sheet", "Toggle Paper Boundary", lambda _: editor.toggle_sheet())
+
+    def _toggle_static(self, checked):
+        if checked:
+            # Mutual exclusivity: If motion is present, stop and clear it first
+            if getattr(self.editor, "motion_result", None):
+                self.editor.clear_motion()
+            self.editor.solve()
+        else:
+            self.editor.clear_all()
+
+    def _toggle_motion(self, checked):
+        if checked:
+            # Mutual exclusivity: If static results are present, clear them first
+            if getattr(self.editor, "result", None):
+                self.editor.invalidate_result()
+            self.editor.run_motion()
+        else:
+            self.editor.clear_motion()
+
+    def _on_diag_change(self, idx):
+        for attr in ['show_axial', 'show_shear', 'show_moment', 'show_deflection']:
+            setattr(self.editor, attr, False)
+        diag = None
+        if idx == 1: diag = 'axial'
+        elif idx == 2: diag = 'shear'
+        elif idx == 3: diag = 'moment'
+        elif idx == 4: self.editor.show_deflection = True
+        if diag:
+            setattr(self.editor, f"show_{diag}", True)
+            if diag not in getattr(self.editor, "diagram_activation_order", []):
+                self.editor.diagram_activation_order.append(diag)
+        self.editor.refresh_geometry()
+
+    def _on_scrub(self, val):
+        res = getattr(self.editor, "motion_result", None)
+        if res and getattr(res, "frames", None):
+            self.editor.set_motion_time(res.duration * val / 1000.0)
 
     def sync_state(self):
-        # A motion frame carries axial force, which the whole toolbar can
-        # already show; it never carries shear or bending, since a
-        # mechanism member is a rigid pin-jointed link rather than an
-        # elastic beam, so those two stay tied to a real static solve.
-        display = getattr(self.editor, "display_result", self.editor.result)
-        has_res = display is not None and getattr(display, "ok", False)
-        has_bending = self.editor.result is not None and getattr(self.editor.result, "ok", False)
+        ed = self.editor
+        from ..engine import checks
+        diagnosis = checks.check(ed.model)
+        
+        has_statics = ed.result is not None and ed.result.ok
+        self.btn_run_static.setEnabled(diagnosis.solvable or has_statics)
+        self.btn_run_static.blockSignals(True)
+        self.btn_run_static.setChecked(has_statics)
+        self.btn_run_static.blockSignals(False)
+        
+        mot_res = getattr(ed, "motion_result", None)
+        has_mot = bool(mot_res and getattr(mot_res, "ok", False) and getattr(mot_res, "frames", None))
+        self.btn_run_motion.setEnabled(ed.model.has_drivers() or has_mot)
+        self.btn_run_motion.blockSignals(True)
+        self.btn_run_motion.setChecked(has_mot)
+        self.btn_run_motion.blockSignals(False)
 
-        buttons_state = [
-            (self.btn_lbl, self.editor.show_labels, True),
-            (self.btn_rxn, self.editor.show_reactions, has_res),
-            (self.btn_tbl, getattr(self.editor, "show_results_table", True), has_res),
-            (self.btn_comp, getattr(self.editor, "show_components", False), True),
-            (self.btn_ax, self.editor.show_axial, has_res),
-            (self.btn_sh, self.editor.show_shear, has_bending),
-            (self.btn_mo, self.editor.show_moment, has_bending),
-            (self.btn_defl, getattr(self.editor, "show_deflection", False), has_res),
-            (
-                self.btn_ov,
-                self.editor.diagrams_overlay,
-                has_res
-                and (self.editor.show_axial or self.editor.show_shear or self.editor.show_moment),
-            ),
-            (self.btn_sheet, getattr(self.editor, "show_sheet", True), True),
-        ]
+        self.btn_play.setEnabled(has_mot)
+        self.btn_play.setChecked(getattr(ed, "playing", False))
+        self.btn_play.setText("Pause" if getattr(ed, "playing", False) else "Play")
+        
+        self.slider.setEnabled(has_mot)
+        if has_mot:
+            self.slider.blockSignals(True)
+            self.slider.setValue(int(1000 * getattr(ed, "motion_time", 0.0) / max(1e-6, mot_res.duration)))
+            self.slider.blockSignals(False)
+        self.lbl_time.setText(f"{getattr(ed, 'motion_time', 0.0):.1f}s")
+        
+        self.btn_schedule.setEnabled(ed.model.has_drivers())
+        self.btn_schedule.setChecked(getattr(ed, "show_schedule", False))
+        self.btn_graph.setEnabled(has_mot)
+        self.btn_graph.setChecked(getattr(ed, "show_graph", False))
 
-        for btn, checked, enabled in buttons_state:
-            btn.blockSignals(True)
-            btn.setChecked(checked)
-            btn.setEnabled(enabled)
-            btn.blockSignals(False)
+        disp_res = getattr(ed, "display_result", None)
+        has_any_res = disp_res is not None and getattr(disp_res, "ok", False)
+        
+        self.btn_lbl.setChecked(getattr(ed, "show_labels", False))
+        self.btn_comp.setChecked(getattr(ed, "show_components", False))
+        self.btn_rxn.setEnabled(has_any_res)
+        self.btn_rxn.setChecked(getattr(ed, "show_reactions", False))
+        self.btn_tbl.setEnabled(has_any_res)
+        self.btn_tbl.setChecked(getattr(ed, "show_results_table", True))
 
+        self.combo_diag.setEnabled(has_any_res)
+        self.combo_diag.blockSignals(True)
+        if getattr(ed, "show_axial", False): self.combo_diag.setCurrentIndex(1)
+        elif getattr(ed, "show_shear", False): self.combo_diag.setCurrentIndex(2)
+        elif getattr(ed, "show_moment", False): self.combo_diag.setCurrentIndex(3)
+        elif getattr(ed, "show_deflection", False): self.combo_diag.setCurrentIndex(4)
+        else: self.combo_diag.setCurrentIndex(0)
+        self.combo_diag.blockSignals(False)
+
+        self.btn_ov.setEnabled(has_any_res and self.combo_diag.currentIndex() > 0)
+        self.btn_ov.setChecked(getattr(ed, "diagrams_overlay", False))
+        self.btn_sheet.setChecked(getattr(ed, "show_sheet", True))
 
 class Editor(QtWidgets.QWidget, MotionController):
     # Panning should feel unrestricted in every direction, like Sketcher's
@@ -314,35 +392,23 @@ class Editor(QtWidgets.QWidget, MotionController):
     # ---------------------------------------------------------------- ui
 
     def _build_ui(self):
-        """Drawing surface + modern floating UI Overlay."""
-        # Use QGridLayout to effortlessly float widgets over the QGraphicsView
         outer = QtWidgets.QGridLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(self.view, 0, 0)
 
-        # Instantiate HUD
-        self.hud = DisplayHUD(self)
-
-        self.motion_bar = MotionBar(self)
-        bar_row = QtWidgets.QHBoxLayout()
-        bar_row.addStretch()
-        bar_row.addWidget(self.motion_bar)
-        bar_row.addStretch()
-
-        # Center horizontally
-        hud_h_layout = QtWidgets.QHBoxLayout()
-        hud_h_layout.addStretch()
-        hud_h_layout.addWidget(self.hud)
-        hud_h_layout.addStretch()
-
-        # Push to the top
-        hud_v_layout = QtWidgets.QVBoxLayout()
-        hud_v_layout.setContentsMargins(20, 20, 20, 20)
-        hud_v_layout.addLayout(hud_h_layout)
-        hud_v_layout.addStretch()
-        hud_v_layout.addLayout(bar_row)
-
-        outer.addLayout(hud_v_layout, 0, 0)
+        self.hud = UnifiedHUD(self)
+        
+        hud_h = QtWidgets.QHBoxLayout()
+        hud_h.addStretch()
+        hud_h.addWidget(self.hud)
+        hud_h.addStretch()
+        
+        hud_v = QtWidgets.QVBoxLayout()
+        hud_v.setContentsMargins(20, 20, 20, 20)
+        hud_v.addLayout(hud_h)
+        hud_v.addStretch()
+        
+        outer.addLayout(hud_v, 0, 0)
 
         self.scene.selectionChanged.connect(self._on_selection)
         self.set_tool(self.tools[0])
@@ -1060,7 +1126,7 @@ class Editor(QtWidgets.QWidget, MotionController):
         try:
             self.motion_overlay.prepareGeometryChange()
             self.motion_overlay.update()
-            self.motion_bar.sync_state()
+            self.hud.sync_state()
         except RuntimeError:
             pass
 
@@ -1576,16 +1642,26 @@ class Editor(QtWidgets.QWidget, MotionController):
         painter.end()
         self.set_prompt(f"Exported to {path}")
 
+
+    def clear_all(self):
+        """Wipe both static results and motion simulation from the view."""
+        self.invalidate_result()
+        self.clear_motion()
+        self.set_prompt("All results cleared.")
+
     def solve(self):
         """Run the analysis. Returns the diagnosis so callers can report it."""
         self.diagnosis = checks.check(self.model)
         if not self.diagnosis.solvable:
             self.result = None
+            self.set_prompt(self.diagnosis.summary())
         else:
             self.result = statics.solve(self.model, run_checks=False)
+            self.set_prompt(self.result.message)
         self.refresh_geometry()
         self.notify()
         return self.diagnosis
+
 
     def status_text(self):
         """One line describing the model, for the task panel."""

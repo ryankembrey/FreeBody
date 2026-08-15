@@ -35,8 +35,7 @@ import math
 
 import numpy as np
 
-from .model import (Model, PIN, ROLLER_X, ROLLER_Y, FIXED, SPRING,
-                    TENSION_ONLY, COMPRESSION_ONLY)
+from .model import Model, PIN, ROLLER_X, ROLLER_Y, FIXED, SPRING, TENSION_ONLY, COMPRESSION_ONLY
 
 
 OK = "ok"
@@ -47,7 +46,7 @@ ERROR = "error"
 DETERMINATE = "determinate"
 INDETERMINATE = "indeterminate"
 MECHANISM = "mechanism"
-DRIVEN = "driven"          # a mechanism with drivers on it: run it, don't solve it
+DRIVEN = "driven"  # a mechanism with drivers on it: run it, don't solve it
 UNKNOWN = "unknown"
 
 
@@ -55,7 +54,7 @@ UNKNOWN = "unknown"
 class Issue:
     level: str
     message: str
-    entities: List[tuple] = field(default_factory=list)   # [(kind, id), ...]
+    entities: List[tuple] = field(default_factory=list)  # [(kind, id), ...]
 
 
 @dataclass
@@ -63,8 +62,8 @@ class Diagnosis:
     solvable: bool = False
     classification: str = UNKNOWN
     reaction_count: int = 0
-    redundancy: int = 0                 # reactions beyond determinacy
-    releases: int = 0                   # moment equations given up at hinges
+    redundancy: int = 0  # reactions beyond determinacy
+    releases: int = 0  # moment equations given up at hinges
     nonlinear: bool = False
     issues: List[Issue] = field(default_factory=list)
 
@@ -86,8 +85,10 @@ class Diagnosis:
                 return "Statically determinate. Non-linear members will be iterated."
             return "Statically determinate. Ready to solve."
         if self.classification == INDETERMINATE:
-            return (f"Statically indeterminate to degree {self.redundancy}. "
-                    "Solvable; results depend on member stiffness.")
+            return (
+                f"Statically indeterminate to degree {self.redundancy}. "
+                "Solvable; results depend on member stiffness."
+            )
         if self.classification == MECHANISM:
             return "Mechanism: not held against all movement."
         return "Incomplete diagram."
@@ -145,7 +146,7 @@ def _equilibrium_matrix(model: Model, group: Set[int]):
             elif comp == "fy":
                 dx, dy = -sa, ca
                 columns.append([dx, dy, x * dy - y * dx])
-            else:                       # moment
+            else:  # moment
                 columns.append([0.0, 0.0, 1.0])
             labels.append((s.id, comp))
     if not columns:
@@ -155,11 +156,12 @@ def _equilibrium_matrix(model: Model, group: Set[int]):
 
 def _group_counts(model: Model, group: Set[int]):
     """(members, joints, reactions, released equations) inside one group."""
-    members = [m for m in model.members.values()
-               if m.start in group and m.end in group]
-    reactions = sum(len(s.reaction_components())
-                    for s in model.supports.values()
-                    if model.support_home_node(s) in group)
+    members = [m for m in model.members.values() if m.start in group and m.end in group]
+    reactions = sum(
+        len(s.reaction_components())
+        for s in model.supports.values()
+        if model.support_home_node(s) in group
+    )
     released = sum(m.released_equations() for m in members)
     joints = len([n for n in group])
     return len(members), joints, reactions, released
@@ -179,65 +181,75 @@ def check(model: Model) -> Diagnosis:
     # Referential integrity first: bad references would crash the adapter.
     for m in model.members.values():
         if m.start not in model.nodes or m.end not in model.nodes:
-            d.issues.append(Issue(ERROR, f"{m.label} refers to a missing node.",
-                                  [("member", m.id)]))
+            d.issues.append(
+                Issue(ERROR, f"{m.label} refers to a missing node.", [("member", m.id)])
+            )
             return d
         if model.member_length(m) < 1e-9:
-            d.issues.append(Issue(ERROR, f"{m.label} has zero length.",
-                                  [("member", m.id)]))
+            d.issues.append(Issue(ERROR, f"{m.label} has zero length.", [("member", m.id)]))
             return d
     for s in model.supports.values():
         if s.anchor is not None:
             if s.anchor not in model.anchors:
-                d.issues.append(Issue(ERROR, "A support refers to a missing point.",
-                                      [("support", s.id)]))
+                d.issues.append(
+                    Issue(ERROR, "A support refers to a missing point.", [("support", s.id)])
+                )
                 return d
         elif s.node not in model.nodes:
-            d.issues.append(Issue(ERROR, "A support refers to a missing node.",
-                                  [("support", s.id)]))
+            d.issues.append(
+                Issue(ERROR, "A support refers to a missing node.", [("support", s.id)])
+            )
             return d
     for a in model.anchors.values():
         if a.member not in model.members:
-            d.issues.append(Issue(ERROR, "A point refers to a missing member.",
-                                  [("anchor", a.id)]))
+            d.issues.append(Issue(ERROR, "A point refers to a missing member.", [("anchor", a.id)]))
             return d
-    for coll, kind in ((model.point_loads, "point_load"),
-                       (model.moment_loads, "moment_load")):
+    for coll, kind in ((model.point_loads, "point_load"), (model.moment_loads, "moment_load")):
         for item in coll.values():
             if item.node is None and item.anchor is None:
-                d.issues.append(Issue(ERROR, "A load is not attached to anything.",
-                                      [(kind, item.id)]))
+                d.issues.append(
+                    Issue(ERROR, "A load is not attached to anything.", [(kind, item.id)])
+                )
                 return d
             if item.node is not None and item.node not in model.nodes:
-                d.issues.append(Issue(ERROR, "A load refers to a missing joint.",
-                                      [(kind, item.id)]))
+                d.issues.append(
+                    Issue(ERROR, "A load refers to a missing joint.", [(kind, item.id)])
+                )
                 return d
             if item.anchor is not None and item.anchor not in model.anchors:
-                d.issues.append(Issue(ERROR, "A load refers to a missing point.",
-                                      [(kind, item.id)]))
+                d.issues.append(
+                    Issue(ERROR, "A load refers to a missing point.", [(kind, item.id)])
+                )
                 return d
     for l in model.line_loads.values():
         if l.member not in model.members:
-            d.issues.append(Issue(ERROR, "A line load refers to a missing member.",
-                                  [("line_load", l.id)]))
+            d.issues.append(
+                Issue(ERROR, "A line load refers to a missing member.", [("line_load", l.id)])
+            )
             return d
     for mo in model.motors.values():
         if mo.member not in model.members or mo.node not in model.nodes:
-            d.issues.append(Issue(ERROR, "A motor refers to something that is gone.",
-                                  [("motor", mo.id)]))
+            d.issues.append(
+                Issue(ERROR, "A motor refers to something that is gone.", [("motor", mo.id)])
+            )
             return d
     for ac in model.actuators.values():
         if ac.member not in model.members:
-            d.issues.append(Issue(ERROR, "An actuator refers to a missing member.",
-                                  [("actuator", ac.id)]))
+            d.issues.append(
+                Issue(ERROR, "An actuator refers to a missing member.", [("actuator", ac.id)])
+            )
             return d
 
     # Springs with no stiffness set restrain nothing, which is a classic trap.
     for s in model.supports.values():
         if s.kind == SPRING and not s.reaction_components():
-            d.issues.append(Issue(
-                ERROR, "A spring support has no stiffness: set kx, ky or kr.",
-                [("support", s.id)]))
+            d.issues.append(
+                Issue(
+                    ERROR,
+                    "A spring support has no stiffness: set kx, ky or kr.",
+                    [("support", s.id)],
+                )
+            )
             return d
 
     d.nonlinear = model.has_nonlinear()
@@ -246,16 +258,22 @@ def check(model: Model) -> Diagnosis:
     # stability test calls it one.
     if model.has_drivers():
         d.classification = DRIVEN
-        d.issues.append(Issue(
-            WARNING,
-            "This diagram has a motor or an actuator on it, so it is a "
-            "mechanism by design. Use Run Motion; Solve would report it as "
-            "unstable, which is exactly what a mechanism is."))
+        d.issues.append(
+            Issue(
+                WARNING,
+                "This diagram has a motor or an actuator on it, so it is a "
+                "mechanism by design. Use Run Motion; Solve would report it as "
+                "unstable, which is exactly what a mechanism is.",
+            )
+        )
 
     if not model.supports:
-        d.issues.append(Issue(ERROR,
-                              "No supports. Add a pin, roller, fixed or spring "
-                              "support to hold the structure."))
+        d.issues.append(
+            Issue(
+                ERROR,
+                "No supports. Add a pin, roller, fixed or spring support to hold the structure.",
+            )
+        )
         if d.classification != DRIVEN:
             d.classification = MECHANISM
         return d
@@ -267,8 +285,9 @@ def check(model: Model) -> Diagnosis:
         connected.add(m.end)
     for nid, n in model.nodes.items():
         if nid not in connected:
-            d.issues.append(Issue(WARNING, f"{n.label} is not attached to any member.",
-                                  [("node", nid)]))
+            d.issues.append(
+                Issue(WARNING, f"{n.label} is not attached to any member.", [("node", nid)])
+            )
 
     # Stability, group by group.
     total_reactions = 0
@@ -298,69 +317,102 @@ def check(model: Model) -> Diagnosis:
         group, count, rank = unstable[0]
         names = ", ".join(sorted(model.nodes[n].label for n in list(group)[:4]))
         if count < 3:
-            detail = (f"only {count} reaction component"
-                      f"{'s' if count != 1 else ''} for 3 equilibrium equations")
+            detail = (
+                f"only {count} reaction component"
+                f"{'s' if count != 1 else ''} for 3 equilibrium equations"
+            )
         else:
-            detail = ("the supports are arranged so they cannot resist every "
-                      "movement (parallel or concurrent reactions)")
+            detail = (
+                "the supports are arranged so they cannot resist every "
+                "movement (parallel or concurrent reactions)"
+            )
         plural = "part of the structure" if len(groups) > 1 else "the structure"
         message = f"Mechanism: {plural} around {names} can still move, because {detail}."
         if d.classification == DRIVEN:
-            d.issues.append(Issue(WARNING, message,
-                                  [("node", n) for n in group]))
+            d.issues.append(
+                Issue(
+                    WARNING,
+                    "This frame is fully held in this pose. Static results "
+                    "treat drivers as rigid links.",
+                )
+            )
+            d.solvable = True
+            d.issues.append(Issue(ERROR, message, [("node", n) for n in group]))
+            d.classification = MECHANISM
             return d
-        d.issues.append(Issue(ERROR, message, [("node", n) for n in group]))
-        d.classification = MECHANISM
-        return d
 
     if internal:
         group, degree, released = internal[0]
         names = ", ".join(sorted(model.nodes[n].label for n in list(group)[:4]))
-        message = (f"Mechanism: the hinges around {names} release "
-                   f"{released} more moment connection"
-                   f"{'s' if released != 1 else ''} than the structure can "
-                   "spare. Remove a release, or add a support.")
+        message = (
+            f"Mechanism: the hinges around {names} release "
+            f"{released} more moment connection"
+            f"{'s' if released != 1 else ''} than the structure can "
+            "spare. Remove a release, or add a support."
+        )
         if d.classification == DRIVEN:
-            d.issues.append(Issue(WARNING, message, [("node", n) for n in group]))
+            d.issues.append(
+                Issue(
+                    WARNING,
+                    "This frame is fully held in this pose. Static results "
+                    "treat drivers as rigid links.",
+                )
+            )
+            d.solvable = True
+            d.issues.append(Issue(ERROR, message, [("node", n) for n in group]))
+            d.classification = MECHANISM
             return d
-        d.issues.append(Issue(ERROR, message, [("node", n) for n in group]))
-        d.classification = MECHANISM
-        return d
 
-    if d.classification == DRIVEN:
-        # Held rigid, yet something is driving it. Almost always a support the
-        # user meant to remove, so it is worth saying out loud.
-        d.issues.append(Issue(
-            WARNING, "The drivers cannot move anything: this frame is fully "
-                     "held. Remove a support, or free a joint."))
-        return d
+        if d.classification == DRIVEN:
+            d.issues.append(
+                Issue(
+                    WARNING,
+                    "This frame is fully held in this pose. Static results "
+                    "treat drivers as rigid links.",
+                )
+            )
+            d.solvable = True
 
     d.solvable = True
     d.classification = DETERMINATE if d.redundancy == 0 else INDETERMINATE
     if d.redundancy > 0:
-        d.issues.append(Issue(
-            WARNING,
-            f"Statically indeterminate to degree {d.redundancy}: reactions depend "
-            "on member stiffness (EA and EI), not statics alone."))
+        d.issues.append(
+            Issue(
+                WARNING,
+                f"Statically indeterminate to degree {d.redundancy}: reactions depend "
+                "on member stiffness (EA and EI), not statics alone.",
+            )
+        )
     if total_releases:
-        d.issues.append(Issue(
-            WARNING,
-            f"{total_releases} moment release{'s' if total_releases != 1 else ''} "
-            "in the frame: those members carry no bending at the released end."))
-    slack = [m for m in model.members.values()
-             if m.behaviour in (TENSION_ONLY, COMPRESSION_ONLY)]
+        d.issues.append(
+            Issue(
+                WARNING,
+                f"{total_releases} moment release{'s' if total_releases != 1 else ''} "
+                "in the frame: those members carry no bending at the released end.",
+            )
+        )
+    slack = [m for m in model.members.values() if m.behaviour in (TENSION_ONLY, COMPRESSION_ONLY)]
     if slack:
-        d.issues.append(Issue(
-            WARNING,
-            f"{len(slack)} member{'s' if len(slack) != 1 else ''} can go slack, "
-            "so the answer is found by iteration and the load path may change."))
+        d.issues.append(
+            Issue(
+                WARNING,
+                f"{len(slack)} member{'s' if len(slack) != 1 else ''} can go slack, "
+                "so the answer is found by iteration and the load path may change.",
+            )
+        )
     if any(m.mp_start > 0 or m.mp_end > 0 for m in model.members.values()):
-        d.issues.append(Issue(
-            WARNING,
-            "Plastic moment capacities are set: the analysis is non-linear and "
-            "hinges will form once a member reaches its capacity."))
-    if not any(model.point_loads) and not any(model.moment_loads) \
-            and not any(model.line_loads) \
-            and not any(m.g for m in model.members.values()):
+        d.issues.append(
+            Issue(
+                WARNING,
+                "Plastic moment capacities are set: the analysis is non-linear and "
+                "hinges will form once a member reaches its capacity.",
+            )
+        )
+    if (
+        not any(model.point_loads)
+        and not any(model.moment_loads)
+        and not any(model.line_loads)
+        and not any(m.g for m in model.members.values())
+    ):
         d.issues.append(Issue(WARNING, "No loads applied: every result will be zero."))
     return d

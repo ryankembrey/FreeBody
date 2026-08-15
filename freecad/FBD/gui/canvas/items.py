@@ -136,27 +136,6 @@ def _hatch(painter, p1: QtCore.QPointF, p2: QtCore.QPointF, size, count=S.HATCH_
         painter.drawLine(QtCore.QPointF(bx, by), QtCore.QPointF(bx - size * lean, by + size))
 
 
-def _draw_text(
-    painter, pos: QtCore.QPointF, text, color, size_pt=7.5, bold=False, align_left=True, halo=True
-):
-    """Screen-upright text at a scene position."""
-    painter.save()
-    painter.translate(pos)
-    f = S.font(size_pt, bold)
-    painter.setFont(f)
-    metrics = QtGui.QFontMetricsF(f)
-    rect = metrics.boundingRect(str(text))
-    x = 0.0 if align_left else -rect.width() / 2.0
-    if halo:
-        painter.setPen(QtGui.QPen(S.PAPER, 1.6))
-        path = QtGui.QPainterPath()
-        path.addText(x, 0.0, f, str(text))
-        painter.strokePath(path, QtGui.QPen(S.PAPER, 1.6))
-    painter.setPen(QtGui.QPen(color))
-    painter.drawText(QtCore.QPointF(x, 0.0), str(text))
-    painter.restore()
-
-
 class _Item(QtWidgets.QGraphicsItem):
     """Base: knows its entity id and where to read the model from."""
 
@@ -175,11 +154,9 @@ class _Item(QtWidgets.QGraphicsItem):
             self.setFlag(QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
 
     def sc(self) -> float:
-        return (
-            getattr(getattr(self.canvas, "model", None), "sheet", None).unit_scale
-            if hasattr(self.canvas, "model")
-            else 1.0
-        )
+        model = getattr(self.canvas, "model", None)
+        sheet = getattr(model, "sheet", None) if model else None
+        return getattr(sheet, "unit_scale", 1.0) if sheet else 1.0
 
     def sync(self):
         """Reposition an anchored item after the model moves."""
@@ -210,10 +187,6 @@ class _Item(QtWidgets.QGraphicsItem):
         if self._hover:
             return S.HOVER
         return base
-
-
-# ---------------------------------------------------------------- node
-
 
 class NodeItem(_Item):
     kind = "node"
@@ -280,11 +253,10 @@ class NodeItem(_Item):
                             fmt(dist, "mm") + " moved",
                         )
 
-    def open_editor(self, scene_pos):
+    def open_editor(self, _scene_pos):
         node = self.node()
         if node is None:
             return
-        model = self.canvas.model
         form = P.PopupForm()
         form.add_text(
             "Name", node.label, lambda v: self.canvas.edit(lambda: setattr(node, "label", v))
@@ -301,8 +273,8 @@ class NodeItem(_Item):
             node.rigid,
             lambda v: self.canvas.edit(lambda: setattr(node, "rigid", v), rebuild=True),
             tooltip="Rigid welds every member meeting here into one body, without "
-                    "grounding the joint itself. For a joint fixed to the world, use "
-                    "a Fixed support instead.",
+            "grounding the joint itself. For a joint fixed to the world, use "
+            "a Fixed support instead.",
         )
         self.canvas.open_popup(self.anchor_point(), form)
 
@@ -377,10 +349,12 @@ class MemberItem(_Item):
                             nx, ny = -nx, -ny
                         off = self.canvas.px(14.0)
                         px_text(
-                            painter, self.canvas,
+                            painter,
+                            self.canvas,
                             QtCore.QPointF(mid_pt.x() - nx * off, mid_pt.y() - ny * off),
                             fmt(delta, "deg") + " rotated",
-                            QtGui.QColor("#00897b"), 13.0,
+                            QtGui.QColor("#00897b"),
+                            13.0,
                         )
 
         # Internal forces clutter the page, so only annotate the selected
@@ -409,7 +383,7 @@ class MemberItem(_Item):
             13.0,
         )
 
-    def open_editor(self, scene_pos):
+    def open_editor(self, _scene_pos):
         member = self.member()
         if member is None:
             return
@@ -479,7 +453,7 @@ class MemberItem(_Item):
             decimals=3,
             suffix="kg",
             tooltip="Only used by Run Motion: a fast-moving link's own "
-                    "inertia adds to the force its driver needs.",
+            "inertia adds to the force its driver needs.",
         )
         form.add_note(
             "EA, EI and self weight only change the answer for a statically "
@@ -509,7 +483,7 @@ class SupportItem(_Item):
         sup = self.support()
         if not sup:
             return QtCore.QPointF()
-        xy = self.model.support_xy(sup)          # joint or point on a member
+        xy = self.model.support_xy(sup)  # joint or point on a member
         return to_scene(*xy, scale=self.sc()) if xy else QtCore.QPointF()
 
     def boundingRect(self):
@@ -622,7 +596,7 @@ class SupportItem(_Item):
 
         self.canvas.edit(apply, rebuild=True)
 
-    def open_editor(self, scene_pos):
+    def open_editor(self, _scene_pos):
         support = self.support()
         if support is None:
             return
@@ -724,7 +698,7 @@ class AnchorItem(_Item):
             painter.setPen(QtGui.QPen(S.INK_LIGHT))
             painter.drawText(QtCore.QPointF(r + 4.0, -r - 2.0), a.label)
 
-    def open_editor(self, scene_pos):
+    def open_editor(self, _scene_pos):
         a = self.anchor()
         if a is None:
             return
@@ -809,7 +783,7 @@ class PointLoadItem(_Item):
             ux = 1.0 if l.fx > 0 else -1.0
             out.append((ux, 0.0, self.LEN * abs(l.fx) / mag, l.fx))
         if abs(l.fy) > 1e-9:
-            uy = -1.0 if l.fy > 0 else 1.0   # screen y is flipped from model y
+            uy = -1.0 if l.fy > 0 else 1.0  # screen y is flipped from model y
             out.append((0.0, uy, self.LEN * abs(l.fy) / mag, l.fy))
         return out
 
@@ -818,7 +792,7 @@ class PointLoadItem(_Item):
         stroker = QtGui.QPainterPathStroker()
         stroker.setWidth(9.0)
         if getattr(self.canvas, "show_components", False):
-            for ux, uy, length, _v in self._components():
+            for ux, uy, length, _ in self._components():
                 p.moveTo(QtCore.QPointF(-ux * length, -uy * length))
                 p.lineTo(QtCore.QPointF(0, 0))
             return stroker.createStroke(p)
@@ -945,7 +919,7 @@ class PointLoadItem(_Item):
             self.unsetCursor()
         super().hoverMoveEvent(event)
 
-    def open_editor(self, scene_pos):
+    def open_editor(self, _scene_pos):
         l = self.load()
         if l is None:
             return
@@ -1011,7 +985,7 @@ class MomentLoadItem(_Item):
             width = QtGui.QFontMetricsF(S.font(13.0)).horizontalAdvance(text)
             painter.drawText(QtCore.QPointF(-width / 2, -self.R - 9.0), text)
 
-    def open_editor(self, scene_pos):
+    def open_editor(self, _scene_pos):
         l = self.load()
         if l is None:
             return
@@ -1085,7 +1059,7 @@ class LineLoadItem(_Item):
         g = self.geometry()
         if not g:
             return QtCore.QRectF()
-        pa, pb, ux, uy, h = g
+        pa, pb, _, _, h = g
         pad = h + self.canvas.px(26.0)
         return QtCore.QRectF(pa, pb).normalized().adjusted(-pad, -pad, pad, pad)
 
@@ -1152,7 +1126,7 @@ class LineLoadItem(_Item):
                 dy=-7.0,
             )
 
-    def open_editor(self, scene_pos):
+    def open_editor(self, _scene_pos):
         l = self.load()
         if l is None:
             return
@@ -1219,14 +1193,9 @@ def _overlay_bounds(canvas) -> QtCore.QRectF:
 
 
 class ResultOverlay(QtWidgets.QGraphicsItem):
-    """Solved reactions: the other half of the free body diagram.
+    """Solved reactions: the other half of the free body diagram."""
 
-    Kept deliberately quiet. Arrows are always drawn; the numbers appear only
-    when the user asks for them, because a page covered in text is unreadable
-    and the results table already carries every figure.
-    """
-
-    ARROW = 68.0  # pixels
+    ARROW = 110.0  # pixels
     HEAD = 16.0
 
     def __init__(self, canvas):
@@ -1236,15 +1205,27 @@ class ResultOverlay(QtWidgets.QGraphicsItem):
         self.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
 
     def sc(self) -> float:
-        sheet = getattr(getattr(self.canvas, "model", None), "sheet", None)
-        return getattr(sheet, "unit_scale", 1.0) or 1.0
+        model = getattr(self.canvas, "model", None)
+        sheet = getattr(model, "sheet", None) if model else None
+        return getattr(sheet, "unit_scale", 1.0) if sheet else 1.0
+
+    def sync(self):
+        """Reposition an anchored item after the model moves."""
+        if self.anchored:
+            try:
+                self.setPos(self.anchor_point())
+            except RuntimeError:
+                pass
+
+    def anchor_point(self) -> QtCore.QPointF:
+        return QtCore.QPointF()
 
     def boundingRect(self):
         return _overlay_bounds(self.canvas)
 
-    def _reaction_arrow(self, painter, c, tip, k):
+    def _reaction_arrow(self, painter, tail, tip, k):
         head = self.HEAD * k
-        dx, dy = tip.x() - c.x(), tip.y() - c.y()
+        dx, dy = tip.x() - tail.x(), tip.y() - tail.y()
         length = math.hypot(dx, dy)
         if length < 1e-9:
             return
@@ -1253,7 +1234,7 @@ class ResultOverlay(QtWidgets.QGraphicsItem):
         pen.setCosmetic(True)
         painter.setPen(pen)
         painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
-        painter.drawLine(c, QtCore.QPointF(tip.x() - ux * head, tip.y() - uy * head))
+        painter.drawLine(tail, QtCore.QPointF(tip.x() - ux * head, tip.y() - uy * head))
         path = QtGui.QPainterPath()
         _arrow_head(path, tip, ux, uy, head)
         painter.setBrush(S.REACTION)
@@ -1276,68 +1257,55 @@ class ResultOverlay(QtWidgets.QGraphicsItem):
                 continue
             c = to_scene(xy[0], xy[1], self.sc())
             mag = reaction.magnitude()
+            
+            # Minimum distance from node to arrow tail (in paper pixels)
+            GAP = 7.0 * k
+
             if mag > 1e-6 and components:
                 for value, ux, uy in ((reaction.fx, 1.0, 0.0), (reaction.fy, 0.0, -1.0)):
                     if abs(value) < 1e-6:
                         continue
                     sx, sy = (ux, uy) if value > 0 else (-ux, -uy)
-                    length = arrow * abs(value) / mag
-                    tip = QtCore.QPointF(c.x() + sx * length, c.y() + sy * length)
-                    self._reaction_arrow(painter, c, tip, k)
+                    length = max(40.0 * k, arrow * abs(value) / mag)
+                    
+                    # Pointing-in: arrowhead (tip) touches the node boundary, tail sits further out
+                    tip = QtCore.QPointF(c.x() - sx * GAP, c.y() - sy * GAP)
+                    tail = QtCore.QPointF(tip.x() - sx * length, tip.y() - sy * length)
+                    
+                    self._reaction_arrow(painter, tail, tip, k)
                     if self.canvas.label_reactions:
                         axis = "Fx" if uy == 0.0 else "Fy"
+                        # Qt draws text upwards from its baseline. If the text is below the arrow (sy < 0),
+                        # we must add an extra vertical offset to clear the font height.
+                        extra_y = 15.0 * k if sy < -0.1 else 0.0
                         px_text(
                             painter, self.canvas,
-                            QtCore.QPointF(tip.x() + sx * 6 * k, tip.y() + sy * 6 * k),
+                            QtCore.QPointF(tail.x() - sx * 10 * k, tail.y() - sy * 10 * k + extra_y),
                             f"{axis} {fmt(value, 'N')}", S.REACTION, 13.0, dy=-4.0,
                         )
             elif mag > 1e-6:
                 ux, uy = reaction.fx / mag, -reaction.fy / mag
-                tip = QtCore.QPointF(c.x() + ux * arrow, c.y() + uy * arrow)
-                self._reaction_arrow(painter, c, tip, k)
+                
+                # Pointing-in: arrowhead (tip) touches the node boundary, tail sits further out
+                tip = QtCore.QPointF(c.x() - ux * GAP, c.y() - uy * GAP)
+                tail = QtCore.QPointF(tip.x() - ux * max(50.0 * k, arrow), tip.y() - uy * max(50.0 * k, arrow))
+                
+                self._reaction_arrow(painter, tail, tip, k)
                 if self.canvas.label_reactions:
+                    # Qt draws text upwards from its baseline. If the text is below the arrow (uy < 0),
+                    # we must add an extra vertical offset to clear the font height.
+                    extra_y = 15.0 * k if uy < -0.1 else 0.0
                     px_text(
-                        painter,
-                        self.canvas,
-                        QtCore.QPointF(tip.x() + ux * 6 * k, tip.y() + uy * 6 * k),
-                        fmt(mag, "N"),
-                        S.REACTION,
-                        13.0,
-                        dy=-4.0,
+                        painter, self.canvas,
+                        QtCore.QPointF(tail.x() - ux * 10 * k, tail.y() - uy * 10 * k + extra_y),
+                        fmt(mag, "N"), S.REACTION, 13.0, dy=-4.0,
                     )
+            
             if abs(reaction.m) > 1e-6:
-                draw_moment_arrow_scene(
-                    painter, self.canvas, c, 22.0 * k, reaction.m > 0, S.REACTION
-                )
+                draw_moment_arrow_scene(painter, self.canvas, c, 22.0 * k, reaction.m > 0, S.REACTION)
                 if self.canvas.label_reactions:
-                    px_text(
-                        painter,
-                        self.canvas,
-                        QtCore.QPointF(c.x(), c.y() + 30.0 * k),
-                        fmt(abs(reaction.m), "N.mm"),
-                        S.REACTION,
-                        13.0,
-                    )
-
-
-def draw_moment_arrow_scene(painter, canvas, center, radius, ccw, color):
-    pen = QtGui.QPen(color, 1.8)
-    pen.setCosmetic(True)
-    painter.setPen(pen)
-    painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
-    rect = QtCore.QRectF(center.x() - radius, center.y() - radius, 2 * radius, 2 * radius)
-    span = (260 * 16) if ccw else (-260 * 16)
-    painter.drawArc(rect, 40 * 16, span)
-    end_deg = math.radians(-(40 + (260 if ccw else -260)))
-    hx = center.x() + radius * math.cos(end_deg)
-    hy = center.y() + radius * math.sin(end_deg)
-    tangent = end_deg + (-math.pi / 2 if ccw else math.pi / 2)
-    path = QtGui.QPainterPath()
-    _arrow_head(path, QtCore.QPointF(hx, hy), math.cos(tangent), math.sin(tangent), radius * 0.45)
-    painter.setBrush(color)
-    painter.setPen(QtCore.Qt.PenStyle.NoPen)
-    painter.drawPath(path)
-
+                    px_text(painter, self.canvas, QtCore.QPointF(c.x(), c.y() + 30.0 * k),
+                            fmt(abs(reaction.m), "N.mm"), S.REACTION, 13.0)
 
 class StructureBoundsOverlay(QtWidgets.QGraphicsItem):
     """Draws dashed blue bounding box around each connected structure on hover/drag."""
@@ -1376,8 +1344,9 @@ class StructureBoundsOverlay(QtWidgets.QGraphicsItem):
             # to_scene, not a raw multiply: unit_scale is a divisor
             # everywhere else drawn, and a sketch import now sets a real
             # one, so multiplying put this box far from the structure.
-            pts = [to_scene(model.nodes[n].x, model.nodes[n].y, sc)
-                   for n in comp if n in model.nodes]
+            pts = [
+                to_scene(model.nodes[n].x, model.nodes[n].y, sc) for n in comp if n in model.nodes
+            ]
             if not pts:
                 continue
             xs = [p.x() for p in pts]
@@ -1996,7 +1965,7 @@ class DiagramResizeOverlay(QtWidgets.QGraphicsItem):
         bounds = self.canvas.diagram_bounds_model()
         if bounds is None:
             return None
-        _min_x, min_y, max_x, _max_y = bounds
+        _, min_y, max_x, _ = bounds
         return max_x, min_y  # bottom-right: a bigger y is up
 
     def _corner_scene(self):
@@ -2033,8 +2002,9 @@ class DiagramResizeOverlay(QtWidgets.QGraphicsItem):
         painter.setBrush(QtGui.QColor(255, 255, 255, 220))
         painter.drawEllipse(c, r, r)
         tick = self.canvas.px(4.5)
-        painter.drawLine(QtCore.QPointF(c.x() - tick, c.y() + tick),
-                         QtCore.QPointF(c.x() + tick, c.y() - tick))
+        painter.drawLine(
+            QtCore.QPointF(c.x() - tick, c.y() + tick), QtCore.QPointF(c.x() + tick, c.y() - tick)
+        )
 
     def hoverEnterEvent(self, event):
         self._hover = True
@@ -2048,8 +2018,10 @@ class DiagramResizeOverlay(QtWidgets.QGraphicsItem):
         super().hoverLeaveEvent(event)
 
     def mousePressEvent(self, event):
-        if (event.button() == QtCore.Qt.MouseButton.LeftButton
-                and self.canvas.begin_diagram_resize()):
+        if (
+            event.button() == QtCore.Qt.MouseButton.LeftButton
+            and self.canvas.begin_diagram_resize()
+        ):
             self._dragging = True
             event.accept()
             return
@@ -2075,6 +2047,7 @@ class DiagramResizeOverlay(QtWidgets.QGraphicsItem):
 
 class DeflectionOverlay(QtWidgets.QGraphicsItem):
     """Draws the elastically deflected shape of the structure."""
+
     def __init__(self, canvas):
         super().__init__()
         self.canvas = canvas
@@ -2082,8 +2055,9 @@ class DeflectionOverlay(QtWidgets.QGraphicsItem):
         self.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
 
     def sc(self):
-        sheet = getattr(getattr(self.canvas, "model", None), "sheet", None)
-        return getattr(sheet, "unit_scale", 1.0) or 1.0
+        model = getattr(self.canvas, "model", None)
+        sheet = getattr(model, "sheet", None) if model else None
+        return getattr(sheet, "unit_scale", 1.0) if sheet else 1.0
 
     def boundingRect(self):
         return _overlay_bounds(self.canvas)
@@ -2098,10 +2072,10 @@ class DeflectionOverlay(QtWidgets.QGraphicsItem):
         model = self.canvas.model
         sc = self.sc()
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
-        
+
         max_disp = 0.0
         max_node = None
-        for nid, (ux, uy, rz) in res.displacements.items():
+        for nid, (ux, uy, _) in res.displacements.items():
             disp = math.hypot(ux, uy)
             if disp > max_disp:
                 max_disp = disp
@@ -2109,10 +2083,10 @@ class DeflectionOverlay(QtWidgets.QGraphicsItem):
 
         if max_disp < 1e-9:
             return
-            
+
         target_px = 25.0 * sc
         scale_factor = target_px / max_disp
-        
+
         pen = QtGui.QPen(QtGui.QColor("#d81b60"), 1.5, QtCore.Qt.PenStyle.DashLine)
         pen.setCosmetic(True)
         painter.setPen(pen)
@@ -2123,78 +2097,57 @@ class DeflectionOverlay(QtWidgets.QGraphicsItem):
             b = model.nodes.get(member.end)
             if not a or not b:
                 continue
-                
+
             disp_a = res.displacements.get(a.id, (0, 0, 0))
             disp_b = res.displacements.get(b.id, (0, 0, 0))
-            
-            p_ax = a.x + disp_a[0] * scale_factor
-            p_ay = a.y + disp_a[1] * scale_factor
-            p_bx = b.x + disp_b[0] * scale_factor
-            p_by = b.y + disp_b[1] * scale_factor
-            
+
             orig_dx = b.x - a.x
             orig_dy = b.y - a.y
             L_orig = math.hypot(orig_dx, orig_dy)
-            
+
             if L_orig > 1e-9:
-                ux = orig_dx / L_orig
-                uy = orig_dy / L_orig
-                nx = -uy
-                ny = ux
+                ux, uy = orig_dx / L_orig, orig_dy / L_orig
+                nx, ny = -uy, ux
                 
-                # Transform global displacements to the local member frame
                 uA = disp_a[0]*ux + disp_a[1]*uy
                 vA = disp_a[0]*nx + disp_a[1]*ny
-                
-                # AnaStruct uses CW positive for rotations, Hermite math needs CCW positive
-                thetaA = -disp_a[2]
+                thetaA = -disp_a[2] # AnaStruct is CW, Hermite is CCW
                 
                 uB = disp_b[0]*ux + disp_b[1]*uy
                 vB = disp_b[0]*nx + disp_b[1]*ny
                 thetaB = -disp_b[2]
-                
+
                 poly = []
                 steps = 12
                 for i in range(steps + 1):
                     t = i / float(steps)
-                    
-                    # Standard Cubic Hermite Shape Functions
                     h00 = 2*t**3 - 3*t**2 + 1
                     h10 = t**3 - 2*t**2 + t
                     h01 = -2*t**3 + 3*t**2
                     h11 = t**3 - t**2
                     
-                    # Evaluate exact transverse deflection at t
-                    v_t = h00 * (vA * scale_factor) + h10 * (thetaA * scale_factor * L_orig) + \
-                          h01 * (vB * scale_factor) + h11 * (thetaB * scale_factor * L_orig)
-                          
-                    # Linear axial displacement at t
-                    u_t = (1-t) * (uA * scale_factor) + t * (uB * scale_factor)
+                    v_t = h00*(vA*scale_factor) + h10*(thetaA*scale_factor*L_orig) + \
+                          h01*(vB*scale_factor) + h11*(thetaB*scale_factor*L_orig)
+                    u_t = (1-t)*(uA*scale_factor) + t*(uB*scale_factor)
                     
-                    # Transform back to Global Model Coordinates
-                    x_local = t * L_orig + u_t
-                    y_local = v_t
-                    
-                    x_glob = a.x + x_local * ux + y_local * nx
-                    y_glob = a.y + x_local * uy + y_local * ny
-                    
-                    poly.append(to_scene(x_glob, y_glob, sc))
-                    
+                    x_l, y_l = t*L_orig + u_t, v_t
+                    x_g, y_g = a.x + x_l*ux + y_l*nx, a.y + x_l*uy + y_l*ny
+                    poly.append(to_scene(x_g, y_g, sc))
+
                 path = QtGui.QPainterPath(poly[0])
-                for pt in poly[1:]:
-                    path.lineTo(pt)
+                for pt in poly[1:]: path.lineTo(pt)
                 painter.drawPath(path)
             else:
-                pa = to_scene(p_ax, p_ay, sc)
-                pb = to_scene(p_bx, p_by, sc)
-                painter.drawLine(pa, pb)
+                p_ax = a.x + disp_a[0] * scale_factor
+                p_ay = a.y + disp_a[1] * scale_factor
+                p_bx = b.x + disp_b[0] * scale_factor
+                p_by = b.y + disp_b[1] * scale_factor
+                painter.drawLine(to_scene(p_ax, p_ay, sc), to_scene(p_bx, p_by, sc))
 
         if max_node is not None:
             n = model.nodes.get(max_node)
             if n:
-                disp_vals = res.displacements[max_node]
-                p_max_x = n.x + disp_vals[0] * scale_factor
-                p_max_y = n.y + disp_vals[1] * scale_factor
-                pt = to_scene(p_max_x, p_max_y, sc)
-                text = f"Max Deflection: {fmt(max_disp, 'mm')}"
-                px_text(painter, self.canvas, pt, text, QtGui.QColor("#d81b60"), size_pt=11.0, dy=-12.0)
+                d_v = res.displacements[max_node]
+                pt = to_scene(n.x + d_v[0]*scale_factor, n.y + d_v[1]*scale_factor, sc)
+                px_text(painter, self.canvas, pt, f"Max Deflection: {fmt(max_disp, 'mm')}", 
+                        QtGui.QColor("#d81b60"), size_pt=11.0, dy=-12.0)

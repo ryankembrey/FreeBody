@@ -1680,7 +1680,7 @@ class MotionController:
         try:
             self.motion_overlay.update()
             self.motion_graph.update()
-            self.motion_bar.sync_state()
+            self.hud.sync_state()
         except RuntimeError:
             self._motion_timer.stop()
 
