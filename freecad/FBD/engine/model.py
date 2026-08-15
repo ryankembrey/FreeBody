@@ -386,6 +386,12 @@ class SketchLink:
     auto_sync: bool = True
     tolerance: float = 1.0  # mm: how far a joint may have moved and still
     # be recognised as the same joint
+    last_synced_fingerprint: str = ""  # what the sketch's own geometry
+    # looked like the last time a resync actually ran, so a recompute
+    # triggered by something unrelated -- an ordinary editor save touches
+    # this object too -- can be told apart from the sketch itself having
+    # actually changed, and skipped rather than re-fitting the whole
+    # diagram against the sketch again for no reason.
 
 
 @dataclass

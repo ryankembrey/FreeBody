@@ -44,10 +44,25 @@ class Diagram:
         model = Model.from_dict(obj.Data or {})
         if not model.sketch_link:
             return
+
+        # A recompute can be triggered for reasons that have nothing to
+        # do with the sketch: an ordinary editor save touches this
+        # object's own Data property on every edit -- deleting a load,
+        # moving a structure -- and FreeCAD recomputes it regardless of
+        # what actually changed. Resyncing every single time would mean
+        # any edit at all risks silently re-fitting the whole diagram
+        # against the sketch again. Only resync when the sketch's own
+        # geometry has actually changed since the last time this ran.
+        fingerprint = sketch_import.sketch_fingerprint(sketch)
+        if fingerprint is not None and fingerprint == model.sketch_link.last_synced_fingerprint:
+            return
+
         report = sketch_import.resync(model, sketch)
         if not report.ok:
             App.Console.PrintWarning("FBD: " + report.message + "\n")
             return
+        if fingerprint is not None:
+            model.sketch_link.last_synced_fingerprint = fingerprint
         obj.Data = model.to_dict()
         App.Console.PrintMessage("FBD: " + report.summary() + "\n")
         for orphan in report.kept_orphans:
@@ -65,14 +80,28 @@ class Diagram:
         this, an already-open editor kept showing its stale in-memory
         model after an undo, even though the tree and the Data property
         itself had already gone back to the old state.
+
+        Deferred, the same reason onDelete elsewhere in this file defers
+        its own work rather than acting immediately: FreeCAD can call
+        this from inside its own undo/redo transaction, mid-restore, and
+        doing real work synchronously here -- rebuilding the whole
+        graphics scene, which is what refresh_editor ultimately does --
+        risks the same kind of corruption that removing objects
+        synchronously from onDelete already caused before that was fixed
+        the identical way.
         """
         if prop != "Data" or _deleting["busy"]:
             return
-        try:
-            from .editor_host import refresh_editor
-            refresh_editor(obj)
-        except Exception:
-            pass
+
+        def refresh():
+            try:
+                from .editor_host import refresh_editor
+                refresh_editor(obj)
+            except Exception:
+                pass
+
+        from PySide6 import QtCore
+        QtCore.QTimer.singleShot(0, refresh)
 
     def __getstate__(self):
         return None
@@ -218,6 +247,13 @@ class ViewProviderStructure:
         the canvas, and keeps each entity's own Visibility (and so its own
         eye icon) in step with the structure's, the same way toggling one
         entity on its own already works.
+
+        Deferred, the same reason Diagram.onChanged defers its own work:
+        this sets Visibility on other objects, which itself re-triggers
+        more onChanged calls recursively, all synchronously -- exactly
+        the kind of document mutation that must not happen from inside a
+        callback FreeCAD can invoke mid-transaction, during its own
+        undo/redo restore.
         """
         if prop != "Visibility":
             return
@@ -228,20 +264,27 @@ class ViewProviderStructure:
         if diagram is None:
             return
         visible = bool(vobj.Visibility)
-        try:
-            from .editor_host import _OPEN
-            entry = _OPEN.get(diagram.Name)
-            editor = entry[1] if entry else None
-        except Exception:
-            editor = None
-        for child in list(getattr(obj, "Group", [])):
-            kind, ident = _parse_entity(getattr(child, "Name", ""))
-            if kind and editor is not None:
-                item = editor._items.get((kind, ident))
-                if item is not None:
-                    item.setVisible(visible)
-            if hasattr(child, "ViewObject") and child.ViewObject is not None:
-                child.ViewObject.Visibility = visible
+        children = list(getattr(obj, "Group", []))
+        diagram_name = diagram.Name
+
+        def cascade():
+            try:
+                from .editor_host import _OPEN
+                entry = _OPEN.get(diagram_name)
+                editor = entry[1] if entry else None
+            except Exception:
+                editor = None
+            for child in children:
+                kind, ident = _parse_entity(getattr(child, "Name", ""))
+                if kind and editor is not None:
+                    item = editor._items.get((kind, ident))
+                    if item is not None:
+                        item.setVisible(visible)
+                if hasattr(child, "ViewObject") and child.ViewObject is not None:
+                    child.ViewObject.Visibility = visible
+
+        from PySide6 import QtCore
+        QtCore.QTimer.singleShot(0, cascade)
 
     def onDelete(self, vobj, subelements):
         """Delete the whole structure from the diagram, after the fact.
@@ -319,6 +362,11 @@ class ViewProviderEntity:
         to hide -- everything is drawn on our own 2D page instead, so
         Visibility has to be wired there by hand or the toggle does
         nothing at all, which is exactly what was happening.
+
+        Deferred, the same reason every other onChanged in this file
+        defers its own work: FreeCAD can call this mid-transaction,
+        during its own undo/redo restore, and touching the canvas
+        synchronously from inside that callback is not safe.
         """
         if prop != "Visibility":
             return
@@ -331,17 +379,24 @@ class ViewProviderEntity:
         diagram = _owning_diagram(obj)
         if diagram is None:
             return
-        try:
-            from .editor_host import _OPEN
-            entry = _OPEN.get(diagram.Name)
-            if not entry:
-                return
-            _sub, editor = entry
-            item = editor._items.get((kind, ident))
-            if item is not None:
-                item.setVisible(bool(vobj.Visibility))
-        except Exception:
-            pass
+        diagram_name = diagram.Name
+        visible = bool(vobj.Visibility)
+
+        def apply_visibility():
+            try:
+                from .editor_host import _OPEN
+                entry = _OPEN.get(diagram_name)
+                if not entry:
+                    return
+                _sub, editor = entry
+                item = editor._items.get((kind, ident))
+                if item is not None:
+                    item.setVisible(visible)
+            except Exception:
+                pass
+
+        from PySide6 import QtCore
+        QtCore.QTimer.singleShot(0, apply_visibility)
 
     def onDelete(self, vobj, subelements):
         """Delete the entity from the diagram, after the fact.
@@ -447,7 +502,9 @@ def _sync_tree_view(diagram_obj, model: Model):
             struct_obj = doc.addObject("App::FeaturePython", f"Structure_{idx}")
             struct_obj.addProperty("App::PropertyString", "FBDType", "FBD", "Type")
             struct_obj.FBDType = "Structure"
-            struct_obj.addProperty("App::PropertyLinkList", "Group", "FBD", "Entities")
+            struct_obj.addProperty(
+                "App::PropertyLinkList", "Group", "FBD", "Entities", 2
+            )  # Transient -- see the note on Diagram.Group above
             if hasattr(struct_obj, "ViewObject") and struct_obj.ViewObject is not None:
                 ViewProviderStructure(struct_obj.ViewObject)
 
@@ -469,7 +526,16 @@ def _sync_tree_view(diagram_obj, model: Model):
             pass
 
     if not hasattr(diagram_obj, "Group"):
-        diagram_obj.addProperty("App::PropertyLinkList", "Group", "FBD", "Child structures")
+        # Transient: excluded from file save, and -- the actual point
+        # here -- from participating in FreeCAD's native undo/redo
+        # transactions. This list is entirely regenerated from the model
+        # on every sync; it never needed to be restorable by FreeCAD's
+        # own undo machinery, and letting it be is what let a stale
+        # Group value reference a permanently-deleted object during an
+        # undo restore.
+        diagram_obj.addProperty(
+            "App::PropertyLinkList", "Group", "FBD", "Child structures", 2
+        )
     diagram_obj.Group = updated_structures
 
 

@@ -389,6 +389,74 @@ class ActuatorItem(_Item):
                 form.add_note("Run the motion to see the force it needs.")
         else:
             form.add_note("Run the motion to see the force it needs.")
+
+        form.add_section("Solve for a target")
+
+        def solve_button(text, callback):
+            btn = QtWidgets.QPushButton(text)
+            btn.setStyleSheet(
+                "QPushButton { background: #1565c0; color: white; font-weight: bold; "
+                "border-radius: 4px; padding: 6px 12px; font-size: 11px; }"
+                "QPushButton:hover { background: #0d47a1; }"
+            )
+            btn.clicked.connect(callback)
+            form._form.addRow(btn)
+            return btn
+
+        members = sorted(self.model.members.values(), key=lambda x: x.id)
+        if members:
+            angle_state = {"member": members[0].id, "deg": 0.0}
+            form.add_combo(
+                "Member", [(m.id, m.label) for m in members], angle_state["member"],
+                lambda v: angle_state.__setitem__("member", v),
+            )
+            form.add_spin(
+                "To angle", 0.0,
+                lambda v: angle_state.__setitem__("deg", v),
+                lo=-360, hi=360, decimals=1, suffix="deg",
+                tooltip="Measured from the positive x axis, same as everywhere else.",
+            )
+
+            def solve_angle():
+                stroke, ok, msg = kinematics.solve_for_member_angle(
+                    self.model, ac.id, angle_state["member"], angle_state["deg"])
+                if ok:
+                    self.canvas.edit(lambda: setattr(ac, "stroke", stroke))
+                self.canvas.set_prompt(msg)
+
+            solve_button("Set stroke for this angle", solve_angle)
+
+        nodes = sorted(self.model.nodes.values(), key=lambda x: x.id)
+        if nodes:
+            travel_state = {"node": nodes[0].id, "mm": 0.0}
+            form.add_combo(
+                "Joint", [(n.id, n.label) for n in nodes], travel_state["node"],
+                lambda v: travel_state.__setitem__("node", v),
+            )
+            form.add_spin(
+                "Travel", 0.0,
+                lambda v: travel_state.__setitem__("mm", v),
+                lo=0.0, decimals=1, suffix="mm",
+                tooltip="Distance from its drawn position, along whatever "
+                        "path it actually takes -- not a straight-line x,y "
+                        "target, since one ram is one degree of freedom.",
+            )
+
+            def solve_travel():
+                stroke, ok, msg = kinematics.solve_for_joint_travel(
+                    self.model, ac.id, travel_state["node"], travel_state["mm"])
+                if ok:
+                    self.canvas.edit(lambda: setattr(ac, "stroke", stroke))
+                self.canvas.set_prompt(msg)
+
+            solve_button("Set stroke for this travel", solve_travel)
+
+        form.add_note(
+            "Solves for the stroke that reaches the target and sets it "
+            "directly. If it says no stroke reaches the target, that "
+            "target is outside what this mechanism can actually do."
+        )
+
         self.canvas.open_popup(scene_pos, form)
 
 

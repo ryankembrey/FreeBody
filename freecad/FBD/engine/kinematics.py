@@ -488,8 +488,12 @@ class MechanismSystem:
                 lengths[ac.id] = (length, rate if active else 0.0)
         return angles, lengths
 
-    def residual(self, q, t) -> np.ndarray:
+    def residual(self, q, t, length_overrides=None) -> np.ndarray:
         angles, lengths = self.driver_targets(t)
+        if length_overrides:
+            lengths = dict(lengths)
+            for aid, val in length_overrides.items():
+                lengths[aid] = (val, 0.0)
         out = np.zeros(len(self.rows))
         for i, row in enumerate(self.rows):
             kind = row["kind"]
@@ -569,11 +573,11 @@ class MechanismSystem:
         return out
 
     # ---
-    def solve_position(self, q_guess, t) -> Tuple[np.ndarray, float, bool]:
+    def solve_position(self, q_guess, t, length_overrides=None) -> Tuple[np.ndarray, float, bool]:
         q = np.array(q_guess, float)
         tol = _TOL * self.scale * self.scale
         for _ in range(_MAX_NEWTON):
-            r = self.residual(q, t)
+            r = self.residual(q, t, length_overrides)
             err = float(np.max(np.abs(r))) if r.size else 0.0
             if err <= tol:
                 return q, err, True
@@ -588,7 +592,7 @@ class MechanismSystem:
             if biggest > 0.5 * self.scale:
                 step *= (0.5 * self.scale) / biggest
             q = q + step
-        r = self.residual(q, t)
+        r = self.residual(q, t, length_overrides)
         return q, float(np.max(np.abs(r))) if r.size else 0.0, False
 
     def solve_velocity(self, q, t) -> np.ndarray:
@@ -1048,6 +1052,137 @@ def simulate(
     result.ok = True
     result.message = f"{len(frames)} frames over {duration:g} s." if mobility == 0 else message
     return result
+
+
+def solve_for_target(model: Model, actuator_id: int, target_fn, samples: int = 25,
+                     tol: float = 1e-4):
+    """Find the ram length that makes target_fn(positions) cross zero.
+
+    target_fn takes the dict of joint positions a solved pose produces and
+    returns a signed number -- positive on one side of the target,
+    negative on the other, zero at it. Bisection, not Newton, and
+    deliberately so: this only ever needs the function's SIGN at a given
+    length, never its derivative, which is what makes it robust across a
+    mechanism's whole geometry rather than only near wherever it happens
+    to start.
+
+    Scans the ram's plausible travel first to find a bracket where the
+    sign actually changes, rather than assuming the whole range is
+    monotonic in one direction, then bisects within it. The scan also
+    marches the Newton guess along from sample to sample, the same trick
+    pose_at() uses, so a mechanism that would lose its branch from a cold
+    guess at an extreme length doesn't lose it here either.
+
+    Returns (stroke, ok, message). stroke is measured from the member's
+    own drawn length, so it can come back negative -- meaning the target
+    needs the ram shorter than drawn, not longer.
+    """
+    actuator = model.actuators.get(actuator_id)
+    if actuator is None:
+        return None, False, "No such actuator."
+    system = MechanismSystem(model)
+    base = system.member_length0.get(actuator.member)
+    driven_ids = {row["actuator"] for row in system.rows
+                 if row["kind"] == _LENGTH and row["actuator"] is not None}
+    if base is None or actuator_id not in driven_ids:
+        return None, False, "This actuator isn't driving anything in the mechanism."
+
+    def evaluate(length, q_guess):
+        q, _err, ok = system.solve_position(q_guess, 0.0, {actuator_id: length})
+        if not ok:
+            return None, q
+        positions = {nid: (float(q[2 * k]), float(q[2 * k + 1]))
+                    for nid, k in system.index.items()}
+        return target_fn(positions), q
+
+    lo_len = max(1e-3, base * 0.2)
+    hi_len = base * 3.0
+    xs = [lo_len + (hi_len - lo_len) * i / (samples - 1) for i in range(samples)]
+
+    lo = hi = None
+    v_lo = v_hi = None
+    q_guess = system.q0.copy()
+    for x in xs:
+        v, q_guess = evaluate(x, q_guess)
+        if v is None:
+            continue
+        if lo is not None and (v_lo > 0) != (v > 0):
+            hi, v_hi = x, v
+            break
+        lo, v_lo = x, v
+
+    if hi is None:
+        return None, False, (
+            "No stroke within a plausible travel range reaches that target. "
+            "Check the target is actually reachable, and that this ram is "
+            "on the member you expect."
+        )
+
+    q_guess = system.q0.copy()
+    for _ in range(60):
+        mid = 0.5 * (lo + hi)
+        v, q_mid = evaluate(mid, q_guess)
+        if v is None:
+            hi = mid
+            continue
+        q_guess = q_mid
+        if abs(v) < tol or (hi - lo) < 1e-6:
+            lo = hi = mid
+            break
+        if (v > 0) == (v_lo > 0):
+            lo, v_lo = mid, v
+        else:
+            hi, v_hi = mid, v
+
+    found_length = 0.5 * (lo + hi)
+    stroke = found_length - base
+    return stroke, True, f"Stroke {stroke:+.1f} mm from the drawn length reaches the target."
+
+
+def solve_for_member_angle(model: Model, actuator_id: int, member_id: int, target_deg: float):
+    """The stroke that puts a member at a specific angle, measured from
+    the positive x axis in degrees, the same convention as everywhere
+    else in this engine.
+    """
+    member = model.members.get(member_id)
+    if member is None:
+        return None, False, "No such member."
+    target_rad = math.radians(target_deg)
+
+    def target_fn(positions):
+        a = positions.get(member.start)
+        b = positions.get(member.end)
+        if a is None or b is None:
+            return 0.0
+        angle = math.atan2(b[1] - a[1], b[0] - a[0])
+        diff = angle - target_rad
+        # Wrapped to -pi..pi so bisection sees one clean crossing rather
+        # than one that wraps around through +-180 degrees.
+        return (diff + math.pi) % (2 * math.pi) - math.pi
+
+    return solve_for_target(model, actuator_id, target_fn)
+
+
+def solve_for_joint_travel(model: Model, actuator_id: int, node_id: int, target_mm: float):
+    """The stroke that moves a joint the given distance from its drawn
+    position -- not to an arbitrary (x, y): a single ram is one degree of
+    freedom, so it can only be asked for a distance along whatever path
+    the mechanism's own geometry actually carries that joint on, not an
+    independent x and y.
+    """
+    node = model.nodes.get(node_id)
+    if node is None:
+        return None, False, "No such joint."
+    home = (node.x, node.y)
+
+    def target_fn(positions):
+        pos = positions.get(node_id)
+        if pos is None:
+            return 0.0
+        dist = math.hypot(pos[0] - home[0], pos[1] - home[1])
+        return dist - target_mm
+
+    return solve_for_target(model, actuator_id, target_fn)
 
 
 def pose_at(model: Model, t: float) -> Optional[Frame]:

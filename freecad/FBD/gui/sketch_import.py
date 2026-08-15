@@ -156,6 +156,30 @@ def read_sketch(sketch) -> Tuple[List[tuple], List[tuple], set]:
     return segments, points, skipped
 
 
+def sketch_fingerprint(sketch):
+    """A cheap fingerprint of a sketch's actual geometry, rounded to
+    absorb the sub-micron noise a constraint solver can reasonably
+    produce between recomputes of the exact same constraints, so a
+    resync only ever runs when the sketch has genuinely changed. None if
+    the sketch can't be read at all -- callers should treat that as
+    "can't tell, sync anyway" rather than silently skipping forever.
+    """
+    try:
+        segments, points, _skipped = read_sketch(sketch)
+    except Exception:
+        return None
+
+    def clean(v, ndigits=6):
+        r = round(float(v), ndigits)
+        return 0.0 if r == 0.0 else r
+
+    return repr((
+        sorted((i, clean(a[0]), clean(a[1]), clean(b[0]), clean(b[1]))
+              for i, a, b in segments),
+        sorted((i, clean(p[0]), clean(p[1])) for i, p in points),
+    ))
+
+
 def _warn(message):
     try:
         import FreeCAD as App

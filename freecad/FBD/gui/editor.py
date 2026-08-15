@@ -1525,6 +1525,46 @@ class Editor(QtWidgets.QWidget, MotionController):
                 rows.append((f"Shear {member.label}", I.fmt(forces.shear_max, "N"), "maximum"))
             if abs(forces.moment_max) > 1e-6:
                 rows.append((f"Moment {member.label}", I.fmt(forces.moment_max, "N.mm"), "maximum"))
+
+        # During a motion run, add how far each joint has travelled and
+        # how far each member has rotated from where it was drawn -- the
+        # same "numbers live in the table, not on the page" rule as
+        # everything above, just extended to motion. Skipped entirely for
+        # anything that hasn't actually moved, so a mostly-grounded
+        # mechanism doesn't produce a wall of "moved 0.0mm" rows.
+        if self._display_mode == "motion" and self.motion_result and self.motion_result.ok:
+            frame = self.motion_result.frame_at(self.motion_time)
+            for nid in sorted(self.model.nodes):
+                node = self.model.nodes.get(nid)
+                pos = frame.positions.get(nid)
+                if node is None or pos is None:
+                    continue
+                dist = math.hypot(pos[0] - node.x, pos[1] - node.y)
+                if dist > 1e-3:
+                    rows.append((
+                        f"Moved {self.model.entity_label(nid)}",
+                        I.fmt(dist, "mm"),
+                        "from its drawn position",
+                    ))
+            for mid in sorted(self.model.members):
+                member = self.model.members.get(mid)
+                if member is None:
+                    continue
+                a0 = self.model.nodes.get(member.start)
+                b0 = self.model.nodes.get(member.end)
+                a1 = frame.positions.get(member.start)
+                b1 = frame.positions.get(member.end)
+                if not (a0 and b0 and a1 and b1):
+                    continue
+                ang0 = math.degrees(math.atan2(b0.y - a0.y, b0.x - a0.x))
+                ang1 = math.degrees(math.atan2(b1[1] - a1[1], b1[0] - a1[0]))
+                delta = ((ang1 - ang0 + 180.0) % 360.0) - 180.0
+                if abs(delta) > 0.05:
+                    rows.append((
+                        f"Rotated {member.label}",
+                        I.fmt(delta, "deg"),
+                        "from its drawn angle",
+                    ))
         return rows
 
     def selected_entity(self):

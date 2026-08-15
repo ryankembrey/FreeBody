@@ -265,6 +265,21 @@ class NodeItem(_Item):
             painter.setPen(QtGui.QPen(S.INK_LIGHT))
             painter.drawText(QtCore.QPointF(self.R + 5.0, -self.R - 4.0), n.label)
 
+        if self.isSelected():
+            result = getattr(self.canvas, "motion_result", None)
+            if result and result.ok and result.frames:
+                frame = result.frame_at(getattr(self.canvas, "motion_time", 0.0))
+                pos = frame.positions.get(self.ident)
+                if pos is not None:
+                    dist = math.hypot(pos[0] - n.x, pos[1] - n.y)
+                    if dist > 1e-3:
+                        painter.setFont(S.font(12.0))
+                        painter.setPen(QtGui.QPen(QtGui.QColor("#00897b")))
+                        painter.drawText(
+                            QtCore.QPointF(self.R + 5.0, self.R + 16.0),
+                            fmt(dist, "mm") + " moved",
+                        )
+
     def open_editor(self, scene_pos):
         node = self.node()
         if node is None:
@@ -337,6 +352,36 @@ class MemberItem(_Item):
         pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
         painter.setPen(pen)
         painter.drawLine(a, b)
+
+        # A rotation reading during motion, alongside the existing axial
+        # annotation below -- the same "selected only" rule, extended.
+        if self.isSelected():
+            motion_result = getattr(self.canvas, "motion_result", None)
+            if motion_result and motion_result.ok and motion_result.frames:
+                m = self.member()
+                a0 = self.model.nodes.get(m.start) if m else None
+                b0 = self.model.nodes.get(m.end) if m else None
+                frame = motion_result.frame_at(getattr(self.canvas, "motion_time", 0.0))
+                a1 = frame.positions.get(m.start) if m else None
+                b1 = frame.positions.get(m.end) if m else None
+                if a0 and b0 and a1 and b1:
+                    ang0 = math.degrees(math.atan2(b0.y - a0.y, b0.x - a0.x))
+                    ang1 = math.degrees(math.atan2(b1[1] - a1[1], b1[0] - a1[0]))
+                    delta = ((ang1 - ang0 + 180.0) % 360.0) - 180.0
+                    if abs(delta) > 0.05:
+                        mid_pt = QtCore.QPointF((a.x() + b.x()) / 2, (a.y() + b.y()) / 2)
+                        dx, dy = b.x() - a.x(), b.y() - a.y()
+                        length = math.hypot(dx, dy) or 1.0
+                        nx, ny = -dy / length, dx / length
+                        if ny < 0:
+                            nx, ny = -nx, -ny
+                        off = self.canvas.px(14.0)
+                        px_text(
+                            painter, self.canvas,
+                            QtCore.QPointF(mid_pt.x() - nx * off, mid_pt.y() - ny * off),
+                            fmt(delta, "deg") + " rotated",
+                            QtGui.QColor("#00897b"), 13.0,
+                        )
 
         # Internal forces clutter the page, so only annotate the selected
         # member; the full set always lives in the results table.
