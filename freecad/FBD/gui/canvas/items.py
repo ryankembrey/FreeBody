@@ -2523,3 +2523,53 @@ class DeflectionOverlay(QtWidgets.QGraphicsItem):
                     QtGui.QColor("#8a94a6"),
                     size_pt=9.0,
                 )
+
+
+class LoadPreview(QtWidgets.QGraphicsItem):
+    """Faint semi-transparent ghost preview when placing a load."""
+
+    LEN = 80.0  # pixels
+    HEAD = 16.0
+
+    def __init__(self, canvas):
+        super().__init__()
+        self.canvas = canvas
+        self.setZValue(42)
+        self.setFlag(QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+        self.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
+
+    def boundingRect(self):
+        r = self.LEN + 20.0
+        return QtCore.QRectF(-r, -r, 2 * r, 2 * r)
+
+    def paint(self, painter, option, widget=None):
+        _ = (option, widget)
+        preview = getattr(self.canvas, "preview_load", None)
+        if not preview or not preview[0] or not preview[1]:
+            return
+
+        kind, _scene_pos = preview
+        painter.save()
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+
+        ghost = QtGui.QColor(S.APPLIED)
+        ghost.setAlpha(110)
+
+        if kind == "point_load":
+            tail = QtCore.QPointF(0.0, -self.LEN)
+            tip = QtCore.QPointF(0.0, 0.0)
+
+            painter.setPen(QtGui.QPen(ghost, 1.8, QtCore.Qt.PenStyle.DashLine))
+            painter.drawLine(tail, QtCore.QPointF(0.0, -self.HEAD))
+
+            path = QtGui.QPainterPath()
+            _arrow_head(path, tip, 0.0, 1.0, self.HEAD)
+
+            painter.setBrush(ghost)
+            painter.setPen(QtCore.Qt.PenStyle.NoPen)
+            painter.drawPath(path)
+
+        elif kind == "moment_load":
+            draw_moment_arrow(painter, QtCore.QPointF(0, 0), 32.0, True, ghost)
+
+        painter.restore()

@@ -2,23 +2,21 @@
 # SPDX-FileCopyrightText: 2026 Ryan Kembrey <ryan.FreeCAD@gmail.com>
 # SPDX-FileNotice: Part of the FBD addon.
 
-"""Drawing tools, as a small state machine.
-
-Each tool owns its own pending state and its own prompt, so adding a tool is a
-new class rather than another branch in a growing conditional. The canvas simply
-forwards events to the active tool.
-
-Interaction rules, consistent across every tool:
-    left click      act
-    Escape          cancel the tool's pending state
-    Enter           finish a multi-click tool
-    hover           the canvas highlights what would be picked
-"""
+"""Drawing tools, as a small state machine."""
 
 from PySide6 import QtCore
-
+from . import items as I
 from ..engine_bridge import edit
 from ...engine import model as M
+
+
+def snap_member_t(t, snap_tol=0.05):
+    """Snap fraction t (0..1) along a member to 0%, 25%, 50%, 75%, 100%."""
+    targets = [(0.0, 0), (0.25, 25), (0.50, 50), (0.75, 75), (1.0, 100)]
+    for target_t, pct in targets:
+        if abs(t - target_t) <= snap_tol:
+            return target_t, True, pct
+    return t, False, int(round(t * 100))
 
 
 class Tool:
@@ -41,8 +39,11 @@ class Tool:
 
     def cancel(self):
         self.canvas.clear_preview()
+        if hasattr(self.canvas, "set_custom_snap_point"):
+            self.canvas.set_custom_snap_point(None)
+        if hasattr(self.canvas, "set_preview_load"):
+            self.canvas.set_preview_load(None, None)
 
-    # Return True if the tool consumed the event.
     def click(self, scene_pos, model_pos) -> bool:
         del scene_pos, model_pos
         return False
@@ -67,12 +68,10 @@ class SelectTool(Tool):
 
     def click(self, scene_pos, model_pos) -> bool:
         del scene_pos, model_pos
-        return False  # the view's own rubber-band selection handles it
+        return False
 
 
 class SupportTool(Tool):
-    """One instance per support kind, so the toolbar reads as distinct buttons."""
-
     wants_node = True
 
     def __init__(self, canvas, kind):
@@ -92,7 +91,6 @@ class SupportTool(Tool):
         def apply(m):
             kw = {"ky": 1000.0} if kind == M.SPRING else {}
             if anchor_id is not None:
-                # A pin or a fixed support on a point pivots the bar itself.
                 return m.add_support_on(anchor_id, kind, **kw)
             return m.add_support(node_id, kind, **kw)
 
@@ -105,14 +103,47 @@ class AnchorTool(Tool):
     name = "Point"
     prompt = "Click a member to add a point on it, where loads can attach."
     wants_member = True
-    snaps_to_grid = False  # its position is defined along the member instead
+    snaps_to_grid = False
+
+    def move(self, scene_pos, model_pos) -> bool:
+        del model_pos
+        member_id = self.canvas.member_near(scene_pos)
+        if member_id is not None:
+            member = self.canvas.model.members.get(member_id)
+            if member:
+                t_raw = self.canvas.member_point_at(scene_pos, member_id)
+                t, snapped, pct = snap_member_t(t_raw)
+                a = self.canvas.model.nodes.get(member.start)
+                b = self.canvas.model.nodes.get(member.end)
+                if a and b:
+                    mx = a.x + t * (b.x - a.x)
+                    my = a.y + t * (b.y - a.y)
+                    snap_pt = I.to_scene(mx, my, self.canvas.global_scale)
+                    
+                    if pct in (0, 100):
+                        tag = "Endpoint (joint exists)"
+                    elif pct == 50:
+                        tag = f"{member.label} at Midspan (50%)"
+                    else:
+                        tag = f"{member.label} at {pct}%"
+                        
+                    self.canvas.set_prompt(f"Click to add point on {tag}")
+                    self.canvas.set_custom_snap_point(snap_pt)
+                    return True
+
+        self.canvas.set_custom_snap_point(None)
+        return False
 
     def click(self, scene_pos, model_pos) -> bool:
         del model_pos
         member_id = self.canvas.member_near(scene_pos)
         if member_id is None:
             return True
-        t = self.canvas.member_point_at(scene_pos, member_id)
+        t_raw = self.canvas.member_point_at(scene_pos, member_id)
+        t, snapped, pct = snap_member_t(t_raw)
+        if pct in (0, 100):
+            self.canvas.set_prompt("Joint already exists at member endpoint.")
+            return True
         anchor = edit(self.canvas, "Add point", lambda m: m.add_anchor(member_id, t))
         self.canvas.select_entity("anchor", anchor.id)
         return True
@@ -122,7 +153,7 @@ class PivotTool(Tool):
     name = "Pivot"
     prompt = "Click a member to pivot it there. One click makes it a lever."
     wants_member = True
-    snaps_to_grid = False  # its position is defined along the member instead
+    snaps_to_grid = False
 
     def click(self, scene_pos, model_pos) -> bool:
         del model_pos
@@ -149,43 +180,267 @@ class PivotTool(Tool):
 
 class PointLoadTool(Tool):
     name = "Force"
-    prompt = "Click a joint or a point on a member for a downward force."
+    prompt = "Click a joint, an existing point, or anywhere on a member for a downward force."
     wants_node = True
+    wants_member = True
+
+    def move(self, scene_pos, model_pos) -> bool:
+        del model_pos
+        node_id = self.canvas.node_near(scene_pos)
+        if node_id is not None:
+            node = self.canvas.model.nodes.get(node_id)
+            if node:
+                pt = I.to_scene(node.x, node.y, self.canvas.global_scale)
+                self.canvas.set_prompt(f"Click to place force on joint {node.label}")
+                self.canvas.set_custom_snap_point(pt)
+                self.canvas.set_preview_load("point_load", pt)
+                return True
+
+        anchor_id = self.canvas.anchor_near(scene_pos)
+        if anchor_id is not None:
+            anchor = self.canvas.model.anchors.get(anchor_id)
+            if anchor:
+                xy = self.canvas.model.anchor_xy(anchor)
+                if xy:
+                    pt = I.to_scene(xy[0], xy[1], self.canvas.global_scale)
+                    self.canvas.set_prompt(f"Click to place force on point {anchor.label}")
+                    self.canvas.set_custom_snap_point(pt)
+                    self.canvas.set_preview_load("point_load", pt)
+                    return True
+
+        member_id = self.canvas.member_near(scene_pos)
+        if member_id is not None:
+            member = self.canvas.model.members.get(member_id)
+            if member:
+                t_raw = self.canvas.member_point_at(scene_pos, member_id)
+                t, snapped, pct = snap_member_t(t_raw)
+                a = self.canvas.model.nodes.get(member.start)
+                b = self.canvas.model.nodes.get(member.end)
+                if a and b:
+                    mx = a.x + t * (b.x - a.x)
+                    my = a.y + t * (b.y - a.y)
+                    snap_pt = I.to_scene(mx, my, self.canvas.global_scale)
+                    
+                    if pct == 0:
+                        tag = f"joint {a.label}"
+                    elif pct == 100:
+                        tag = f"joint {b.label}"
+                    elif pct == 50:
+                        tag = f"{member.label} at Midspan (50%)"
+                    else:
+                        tag = f"{member.label} at {pct}%"
+                        
+                    self.canvas.set_prompt(f"Click to place force on {tag}")
+                    self.canvas.set_custom_snap_point(snap_pt)
+                    self.canvas.set_preview_load("point_load", snap_pt)
+                    return True
+
+        self.canvas.set_custom_snap_point(None)
+        self.canvas.set_preview_load(None, None)
+        return False
 
     def click(self, scene_pos, model_pos) -> bool:
         del model_pos
         node_id = self.canvas.node_near(scene_pos)
         anchor_id = None if node_id is not None else self.canvas.anchor_near(scene_pos)
-        if node_id is None and anchor_id is None:
-            return True
+        member_id = None if (node_id or anchor_id) else self.canvas.member_near(scene_pos)
+        
         magnitude = self.canvas.default_force
-        load = edit(
-            self.canvas,
-            "Add force",
-            lambda m: m.add_point_load(node=node_id, fx=0.0, fy=-magnitude, anchor=anchor_id),
-        )
-        self.canvas.select_entity("point_load", load.id)
+
+        if node_id is not None:
+            load = edit(
+                self.canvas,
+                "Add force",
+                lambda m: m.add_point_load(node=node_id, fx=0.0, fy=-magnitude),
+            )
+            self.canvas.select_entity("point_load", load.id)
+            self.cancel()
+            return True
+
+        if anchor_id is not None:
+            load = edit(
+                self.canvas,
+                "Add force",
+                lambda m: m.add_point_load(anchor=anchor_id, fx=0.0, fy=-magnitude),
+            )
+            self.canvas.select_entity("point_load", load.id)
+            self.cancel()
+            return True
+
+        if member_id is not None:
+            t_raw = self.canvas.member_point_at(scene_pos, member_id)
+            t, snapped, pct = snap_member_t(t_raw)
+            member = self.canvas.model.members.get(member_id)
+            if not member:
+                return True
+
+            if pct == 0:
+                load = edit(
+                    self.canvas,
+                    "Add force",
+                    lambda m: m.add_point_load(node=member.start, fx=0.0, fy=-magnitude),
+                )
+                self.canvas.select_entity("point_load", load.id)
+                self.cancel()
+                return True
+
+            if pct == 100:
+                load = edit(
+                    self.canvas,
+                    "Add force",
+                    lambda m: m.add_point_load(node=member.end, fx=0.0, fy=-magnitude),
+                )
+                self.canvas.select_entity("point_load", load.id)
+                self.cancel()
+                return True
+
+            created_load_id = [None]
+
+            def add_load_on_new_anchor(m):
+                a = m.add_anchor(member_id, t)
+                pl = m.add_point_load(anchor=a.id, fx=0.0, fy=-magnitude)
+                created_load_id[0] = pl.id
+                return pl
+
+            edit(self.canvas, "Add force on member", add_load_on_new_anchor)
+            if created_load_id[0]:
+                self.canvas.select_entity("point_load", created_load_id[0])
+            self.cancel()
+            return True
+
         return True
 
 
 class MomentTool(Tool):
     name = "Moment"
-    prompt = "Click a joint or a point on a member to apply a couple."
+    prompt = "Click a joint, an existing point, or anywhere on a member to apply a couple."
     wants_node = True
+    wants_member = True
+
+    def move(self, scene_pos, model_pos) -> bool:
+        del model_pos
+        node_id = self.canvas.node_near(scene_pos)
+        if node_id is not None:
+            node = self.canvas.model.nodes.get(node_id)
+            if node:
+                pt = I.to_scene(node.x, node.y, self.canvas.global_scale)
+                self.canvas.set_prompt(f"Click to place moment on joint {node.label}")
+                self.canvas.set_custom_snap_point(pt)
+                self.canvas.set_preview_load("moment_load", pt)
+                return True
+
+        anchor_id = self.canvas.anchor_near(scene_pos)
+        if anchor_id is not None:
+            anchor = self.canvas.model.anchors.get(anchor_id)
+            if anchor:
+                xy = self.canvas.model.anchor_xy(anchor)
+                if xy:
+                    pt = I.to_scene(xy[0], xy[1], self.canvas.global_scale)
+                    self.canvas.set_prompt(f"Click to place moment on point {anchor.label}")
+                    self.canvas.set_custom_snap_point(pt)
+                    self.canvas.set_preview_load("moment_load", pt)
+                    return True
+
+        member_id = self.canvas.member_near(scene_pos)
+        if member_id is not None:
+            member = self.canvas.model.members.get(member_id)
+            if member:
+                t_raw = self.canvas.member_point_at(scene_pos, member_id)
+                t, snapped, pct = snap_member_t(t_raw)
+                a = self.canvas.model.nodes.get(member.start)
+                b = self.canvas.model.nodes.get(member.end)
+                if a and b:
+                    mx = a.x + t * (b.x - a.x)
+                    my = a.y + t * (b.y - a.y)
+                    snap_pt = I.to_scene(mx, my, self.canvas.global_scale)
+                    
+                    if pct == 0:
+                        tag = f"joint {a.label}"
+                    elif pct == 100:
+                        tag = f"joint {b.label}"
+                    elif pct == 50:
+                        tag = f"{member.label} at Midspan (50%)"
+                    else:
+                        tag = f"{member.label} at {pct}%"
+                        
+                    self.canvas.set_prompt(f"Click to place moment on {tag}")
+                    self.canvas.set_custom_snap_point(snap_pt)
+                    self.canvas.set_preview_load("moment_load", snap_pt)
+                    return True
+
+        self.canvas.set_custom_snap_point(None)
+        self.canvas.set_preview_load(None, None)
+        return False
 
     def click(self, scene_pos, model_pos) -> bool:
         del model_pos
         node_id = self.canvas.node_near(scene_pos)
         anchor_id = None if node_id is not None else self.canvas.anchor_near(scene_pos)
-        if node_id is None and anchor_id is None:
-            return True
+        member_id = None if (node_id or anchor_id) else self.canvas.member_near(scene_pos)
+        
         value = self.canvas.default_moment
-        load = edit(
-            self.canvas,
-            "Add moment",
-            lambda m: m.add_moment_load(node=node_id, m=value, anchor=anchor_id),
-        )
-        self.canvas.select_entity("moment_load", load.id)
+
+        if node_id is not None:
+            load = edit(
+                self.canvas,
+                "Add moment",
+                lambda m: m.add_moment_load(node=node_id, m=value),
+            )
+            self.canvas.select_entity("moment_load", load.id)
+            self.cancel()
+            return True
+
+        if anchor_id is not None:
+            load = edit(
+                self.canvas,
+                "Add moment",
+                lambda m: m.add_moment_load(anchor=anchor_id, m=value),
+            )
+            self.canvas.select_entity("moment_load", load.id)
+            self.cancel()
+            return True
+
+        if member_id is not None:
+            t_raw = self.canvas.member_point_at(scene_pos, member_id)
+            t, snapped, pct = snap_member_t(t_raw)
+            member = self.canvas.model.members.get(member_id)
+            if not member:
+                return True
+
+            if pct == 0:
+                load = edit(
+                    self.canvas,
+                    "Add moment",
+                    lambda m: m.add_moment_load(node=member.start, m=value),
+                )
+                self.canvas.select_entity("moment_load", load.id)
+                self.cancel()
+                return True
+
+            if pct == 100:
+                load = edit(
+                    self.canvas,
+                    "Add moment",
+                    lambda m: m.add_moment_load(node=member.end, m=value),
+                )
+                self.canvas.select_entity("moment_load", load.id)
+                self.cancel()
+                return True
+
+            created_load_id = [None]
+
+            def add_moment_on_new_anchor(m):
+                a = m.add_anchor(member_id, t)
+                ml = m.add_moment_load(anchor=a.id, m=value)
+                created_load_id[0] = ml.id
+                return ml
+
+            edit(self.canvas, "Add moment on member", add_moment_on_new_anchor)
+            if created_load_id[0]:
+                self.canvas.select_entity("moment_load", created_load_id[0])
+            self.cancel()
+            return True
+
         return True
 
 

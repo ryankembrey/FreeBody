@@ -192,6 +192,10 @@ class Editor(QtWidgets.QWidget, MotionController):
         self.results_overlay = I.ResultsTableOverlay(self)
         self.scene.addItem(self.results_overlay)
 
+        self.preview_load = None
+        self.load_preview = I.LoadPreview(self)
+        self.scene.addItem(self.load_preview)
+
         self.tools = build_tools(self)
         self.tool = self.tools[0]
 
@@ -248,6 +252,7 @@ class Editor(QtWidgets.QWidget, MotionController):
         if getattr(self, "tool", None):
             self.tool.deactivate()
         self.tool = tool
+        self._custom_snap_point = None
         select_mode = tool is self.tools[0]
         self.view.setDragMode(
             QtWidgets.QGraphicsView.DragMode.RubberBandDrag
@@ -262,17 +267,23 @@ class Editor(QtWidgets.QWidget, MotionController):
         """Crosshair with the active tool's icon riding beside it, so a
         placement tool always shows what it's about to place."""
         if select_mode:
+            self.view.unsetCursor()
+            if hasattr(self.view, "viewport") and self.view.viewport():
+                self.view.viewport().unsetCursor()
             self.view.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
             return
         pix = self._tool_cursor_pixmap(tool.name)
         if pix is not None:
-            self.view.setCursor(QtGui.QCursor(pix, 4, 4))
+            qcursor = QtGui.QCursor(pix, 5, 5)
+            self.view.setCursor(qcursor)
+            if hasattr(self.view, "viewport") and self.view.viewport():
+                self.view.viewport().setCursor(qcursor)
         else:
             self.view.setCursor(QtCore.Qt.CursorShape.CrossCursor)
 
     def _tool_cursor_pixmap(self, tool_name):
         cache = self.__dict__.setdefault("_cursor_cache", {})
-        if tool_name in cache:
+        if tool_name in cache and cache[tool_name] is not None:
             return cache[tool_name]
         pix = None
         try:
@@ -282,19 +293,19 @@ class Editor(QtWidgets.QWidget, MotionController):
             badge = QtGui.QPixmap(icon_path(icon_file)) if icon_file else QtGui.QPixmap()
             if not badge.isNull():
                 badge = badge.scaled(
-                    16,
-                    16,
+                    24,
+                    24,
                     QtCore.Qt.AspectRatioMode.KeepAspectRatio,
                     QtCore.Qt.TransformationMode.SmoothTransformation,
                 )
-                canvas = QtGui.QPixmap(26, 26)
+                canvas = QtGui.QPixmap(36, 36)
                 canvas.fill(QtCore.Qt.GlobalColor.transparent)
                 painter = QtGui.QPainter(canvas)
                 painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
-                painter.setPen(QtGui.QPen(QtGui.QColor(30, 30, 30), 1.3))
-                painter.drawLine(QtCore.QPointF(4, 1), QtCore.QPointF(4, 7))
-                painter.drawLine(QtCore.QPointF(1, 4), QtCore.QPointF(7, 4))
-                painter.drawPixmap(9, 9, badge)
+                painter.setPen(QtGui.QPen(QtGui.QColor(30, 30, 30), 1.4))
+                painter.drawLine(QtCore.QPointF(5, 1), QtCore.QPointF(5, 9))
+                painter.drawLine(QtCore.QPointF(1, 5), QtCore.QPointF(9, 5))
+                painter.drawPixmap(10, 10, badge)
                 painter.end()
                 pix = canvas
         except Exception:
@@ -311,6 +322,20 @@ class Editor(QtWidgets.QWidget, MotionController):
             sync_tool_actions(self.tool.name if self.tool else None)
         except Exception:
             pass
+
+    def set_preview_load(self, kind, scene_pos):
+        self.preview_load = (kind, scene_pos) if (kind and scene_pos) else None
+        if hasattr(self, "load_preview") and self.load_preview:
+            if kind and scene_pos:
+                self.load_preview.setPos(scene_pos)
+                self.load_preview.setVisible(True)
+            else:
+                self.load_preview.setVisible(False)
+            self.load_preview.prepareGeometryChange()
+            self.load_preview.update()
+
+    def set_custom_snap_point(self, scene_pt):
+        self._custom_snap_point = scene_pt
 
     def set_prompt(self, text):
         """Tool hints belong in the status bar, not printed on the page."""
@@ -490,10 +515,7 @@ class Editor(QtWidgets.QWidget, MotionController):
                 best, best_d = p, d
         if best is not None:
             return QtCore.QPointF(best)
-        step = self.model.sheet.grid or 10.0
-        return QtCore.QPointF(
-            round(scene_pos.x() / step) * step, round(scene_pos.y() / step) * step
-        )
+        return scene_pos
 
     def node_near(self, scene_pos):
         tol = self.view.pixels_to_scene(S.SNAP_PIXELS)
@@ -797,7 +819,20 @@ class Editor(QtWidgets.QWidget, MotionController):
                 self.scene.removeItem(self._snap_marker)
                 self._snap_marker = None
             return
-        p = self.snap(scene_pos)
+
+        p = getattr(self, "_custom_snap_point", None)
+        if p is None:
+            node_id = self.node_near(scene_pos)
+            if node_id is not None:
+                node = self.model.nodes.get(node_id)
+                if node:
+                    p = I.to_scene(node.x, node.y, scale=self.global_scale)
+
+        if p is None:
+            if self._snap_marker is not None:
+                self.scene.removeItem(self._snap_marker)
+                self._snap_marker = None
+            return
         r = self.view.pixels_to_scene(4.0)
         if self._snap_marker is None:
             self._snap_marker = self.scene.addEllipse(
