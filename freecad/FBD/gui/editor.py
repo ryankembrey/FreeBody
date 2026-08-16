@@ -18,6 +18,7 @@ import FreeCAD as App  # type: ignore
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import style as S
+from .preferences import prefs
 from .canvas.scene import Scene, View
 from .canvas import items as I
 from .canvas import popup as P
@@ -138,17 +139,17 @@ class Editor(QtWidgets.QWidget, MotionController):
         self._drag_initial_positions = {}
         self._drag_started = False
 
-        self.show_labels = False  # joint names off by default: less clutter
-        self.label_loads = True
-        self.label_reactions = True
-        self.show_reactions = True
-        self.show_results_table = True
-        self.show_moment = False
-        self.show_shear = False
-        self.show_axial = False
-        self.show_deflection = False
-        self.infinite_canvas = True
-        self.show_sheet = True
+        self.show_labels = prefs.show_joint_labels()
+        self.label_loads = prefs.label_loads()
+        self.label_reactions = prefs.label_reactions()
+        self.show_reactions = prefs.show_reactions()
+        self.show_results_table = prefs.show_results_table()
+        self.show_moment = prefs.show_moment_diagram()
+        self.show_shear = prefs.show_shear_diagram()
+        self.show_axial = prefs.show_axial_diagram()
+        self.show_deflection = prefs.show_deflection_diagram()
+        self.infinite_canvas = prefs.infinite_canvas()
+        self.show_sheet = prefs.show_sheet()
         self.diagram_positions = {
             "axial": None,
             "shear": None,
@@ -165,12 +166,12 @@ class Editor(QtWidgets.QWidget, MotionController):
         self.diagram_activation_order = []
         self.results_table_pos = None
         self.results_table_scale = 1.0
-        self.show_components = False  # forces as separate X/Y arrows, not one angled arrow
+        self.show_components = prefs.show_components()  # forces as separate X/Y arrows, not one angled arrow
         self.observers = []  # callables notified when anything changes
-        self.snap_enabled = True
-        self.default_force = 1000.0  # N
-        self.default_moment = 1.0e5  # N.mm
-        self.default_line_load = 1.0  # N/mm
+        self.snap_enabled = prefs.snap_enabled()
+        self.default_force = prefs.default_force()  # N
+        self.default_moment = prefs.default_moment()  # N.mm
+        self.default_line_load = prefs.default_line_load()  # N/mm
 
         self.scene = Scene(self)
         self.view = View(self.scene, self)
@@ -1707,6 +1708,7 @@ class Editor(QtWidgets.QWidget, MotionController):
 
     def solve(self):
         """Run the analysis. Returns the diagnosis so callers can report it."""
+        statics._MAX_SLACK_PASSES = prefs.max_slack_passes()
         self.diagnosis = checks.check(self.model)
         if not self.diagnosis.solvable:
             self.result = None

@@ -61,6 +61,42 @@ SNAP_PIXELS = 10.0  # snapping tolerance, in screen pixels
 HANDLE_PIXELS = 9.0
 
 
+# ---- live preferences -----------------------------------------------------
+
+
+def reload_from_preferences():
+    """Pull colours and sizes from Free Body's stored preferences.
+
+    Called once when this module is first imported, and again whenever
+    the Appearance preference page is saved, so a change applies to the
+    next thing drawn without restarting FreeCAD. Falls back to the
+    hardcoded values above whenever FreeCAD's own preference store
+    cannot be reached, such as under a test harness with a stubbed
+    FreeCAD module.
+    """
+    global APPLIED, REACTION, INTERNAL, SELECT, SNAP
+    global ARROW_LEN, ARROW_MIN, HATCH_COUNT, SNAP_PIXELS, HANDLE_PIXELS
+    try:
+        import FreeCAD as App
+
+        params = App.ParamGet("User parameter:BaseApp/Preferences/Mod/FBD")
+    except Exception:
+        return
+    APPLIED = QtGui.QColor(params.GetString("ColorApplied", APPLIED.name()))
+    REACTION = QtGui.QColor(params.GetString("ColorReaction", REACTION.name()))
+    INTERNAL = QtGui.QColor(params.GetString("ColorInternal", INTERNAL.name()))
+    SELECT = QtGui.QColor(params.GetString("ColorSelect", SELECT.name()))
+    SNAP = QtGui.QColor(params.GetString("ColorSnap", SNAP.name()))
+    ARROW_LEN = params.GetFloat("ArrowLength", ARROW_LEN)
+    ARROW_MIN = params.GetFloat("ArrowMinLength", ARROW_MIN)
+    HATCH_COUNT = params.GetInt("HatchCount", HATCH_COUNT)
+    SNAP_PIXELS = params.GetFloat("SnapPixels", SNAP_PIXELS)
+    HANDLE_PIXELS = params.GetFloat("HandlePixels", HANDLE_PIXELS)
+
+
+reload_from_preferences()
+
+
 # ---- text -----------------------------------------------------------------
 
 

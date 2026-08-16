@@ -30,6 +30,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 import math
 
+from .preferences import prefs
+
 COINCIDENT_TOL = 1e-3  # mm: sketch endpoints the constraints tied together
 
 
@@ -214,7 +216,9 @@ def import_sketch(model, sketch, link: bool = True) -> Tuple[List, List]:
         touched[n2.id] = n2
         if n1.id == n2.id:
             continue  # zero length in the sketch
-        member = model.add_member(n1.id, n2.id)
+        member = model.add_member(
+            n1.id, n2.id, EA=prefs.default_ea(), EI=prefs.default_ei()
+        )
         member.source_geo = index
         members.append(member)
 
@@ -401,7 +405,9 @@ def resync(model, sketch) -> SyncReport:
         start, end = slot_to_node[a], slot_to_node[b]
         member = old_members.get(index)
         if member is None:
-            member = model.add_member(start, end)
+            member = model.add_member(
+                start, end, EA=prefs.default_ea(), EI=prefs.default_ei()
+            )
             member.source_geo = index
             report.added_members += 1
         else:

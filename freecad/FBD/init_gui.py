@@ -5,10 +5,12 @@
 import os
 import FreeCADGui as Gui  # type: ignore
 from .gui import commands as _fbd_commands
+from .gui import preferences as _fbd_preferences
 
 _ICONS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "icons")
 
 _fbd_commands.register()
+_fbd_preferences.register()
 
 
 class FBDWorkbench(Gui.Workbench):

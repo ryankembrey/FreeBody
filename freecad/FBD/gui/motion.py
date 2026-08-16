@@ -26,6 +26,7 @@ import math
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import style as S
+from .preferences import prefs
 from .canvas import popup as P
 from .canvas.items import _Item, _arrow_head, _hatch, px_text, fmt, to_scene
 from ..engine.results import StaticResult, Reaction, MemberForces
@@ -1574,7 +1575,13 @@ class MotorTool(_DriverTool):
         else:
             node_id = self._nearest_end(scene_pos, member)
             edit(self.canvas, "Ground the motor joint", lambda m: m.add_support(node_id, M.PIN))
-        motor = edit(self.canvas, "Add motor", lambda m: m.add_motor(node_id, member_id))
+        motor = edit(
+            self.canvas,
+            "Add motor",
+            lambda m: m.add_motor(
+                node_id, member_id, speed=prefs.motor_speed(), sweep=prefs.motor_sweep()
+            ),
+        )
         self.canvas.preview_driver = None
         self.canvas.select_entity("motor", motor.id)
         self.canvas.set_prompt(f"{member.label} is driven. Press Run Motion to watch it.")
@@ -1604,9 +1611,16 @@ class ActuatorTool(_DriverTool):
         if member_id is None:
             return True
         length = self.canvas.model.member_length(self.canvas.model.members[member_id])
-        stroke = max(10.0, round(length * 0.3, -1))
+        stroke = max(
+            prefs.actuator_min_stroke(),
+            round(length * prefs.actuator_stroke_fraction(), -1),
+        )
         actuator = edit(
-            self.canvas, "Add actuator", lambda m: m.add_actuator(member_id, stroke=stroke)
+            self.canvas,
+            "Add actuator",
+            lambda m: m.add_actuator(
+                member_id, stroke=stroke, speed=prefs.actuator_speed()
+            ),
         )
         self.canvas.preview_driver = None
         self.canvas.select_entity("actuator", actuator.id)
@@ -1661,18 +1675,18 @@ class MotionController:
         self.motion_result = None
         self.motion_time = 0.0
         self.playing = False
-        self.show_motion = True
-        self.label_motion = True
-        self.default_lever_length = 200.0
+        self.show_motion = prefs.show_motion()
+        self.label_motion = prefs.label_motion()
+        self.default_lever_length = prefs.lever_default_length()
         self._display_mode = "static"
         self._motion_timer = QtCore.QTimer(self)
-        self._motion_timer.setInterval(33)
+        self._motion_timer.setInterval(prefs.playback_refresh_ms())
         self._motion_timer.timeout.connect(self._advance)
-        self.show_graph = True
+        self.show_graph = prefs.show_graph()
         self.graph_pos = None
         self.graph_scale = 1.0
         self.motion_curves = []
-        self.show_schedule = False
+        self.show_schedule = prefs.show_schedule()
         self.schedule_pos = None
         self.schedule_scale = 1.0
         self.preview_driver = None
@@ -1702,6 +1716,8 @@ class MotionController:
     def run_motion(self):
         self.playing = False
         self._motion_timer.stop()
+        kinematics._TOL = prefs.kinematics_tolerance()
+        kinematics._MAX_NEWTON = prefs.kinematics_max_iterations()
         self.motion_result = kinematics.simulate(self.model)
         self.motion_curves = (
             kinematics.effort_curves(self.model, self.motion_result)

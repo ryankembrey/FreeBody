@@ -48,6 +48,8 @@ class _Workbench:
 _module("FreeCADGui", Workbench=_Workbench,
         addCommand=lambda n, o: _registered.__setitem__(n, o),
         addWorkbench=lambda wb: _registered.__setitem__("__wb__", wb),
+        addPreferencePage=lambda cls, group: _registered.setdefault(
+            "__prefs__", []).append((cls, group)),
         getMainWindow=lambda: _Any(), ActiveDocument=None,
         Selection=types.SimpleNamespace(getSelection=lambda: [],
                                         clearSelection=lambda: None),
@@ -95,6 +97,16 @@ if missing:
 else:
     print(f"registered {len(commands.COMMANDS)} commands: "
           f"{', '.join(sorted(commands.COMMANDS))}")
+
+from freecad.FBD.gui import preferences as _fbd_prefs_mod  # noqa: E402
+pages = _registered.get("__prefs__", [])
+if len(pages) != len(_fbd_prefs_mod.PAGES):
+    failures.append(
+        f"preference pages not all registered: {len(pages)} of "
+        f"{len(_fbd_prefs_mod.PAGES)}"
+    )
+else:
+    print(f"registered {len(pages)} preference pages")
 
 if "__wb__" not in _registered:
     failures.append("workbench never added")

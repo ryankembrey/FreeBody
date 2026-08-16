@@ -5,9 +5,35 @@
 """Document storage."""
 
 import FreeCAD as App  # type: ignore
-from ..engine.model import Model
+from ..engine.model import Model, SHEET_PRESETS
 
 TYPE_TAG = "FBD::Diagram"
+
+
+def _default_model() -> Model:
+    """A fresh Model seeded with the user's own preferred defaults from
+    Edit > Preferences > FBD, so a newly created diagram starts out the
+    way the user actually wants rather than with this addon's own
+    factory settings.
+    """
+    from .preferences import prefs
+
+    model = Model()
+    preset = prefs.sheet_preset()
+    if preset in SHEET_PRESETS:
+        model.sheet.width, model.sheet.height = SHEET_PRESETS[preset]
+        model.sheet.name = preset
+    model.sheet.grid = prefs.sheet_grid()
+    model.sheet.title = prefs.sheet_title()
+    model.motion.duration = prefs.motion_duration()
+    model.motion.fps = prefs.motion_fps()
+    model.motion.trace = prefs.motion_trace()
+    model.motion.ghosts = prefs.motion_ghosts()
+    model.motion.repeat = prefs.motion_repeat()
+    model.analysis.geometric_nonlinear = prefs.geometric_nonlinear()
+    model.analysis.max_iter = prefs.max_iterations()
+    model.analysis.discretisation = prefs.discretisation()
+    return model
 
 
 class Diagram:
@@ -26,7 +52,7 @@ class Diagram:
             "App::PropertyBool", "AutoSync", "FBD", "Re-read the sketch whenever it changes"
         )
         obj.AutoSync = True
-        obj.Data = Model().to_dict()
+        obj.Data = _default_model().to_dict()
 
     def execute(self, obj):
         if _deleting["busy"]:
