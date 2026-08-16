@@ -615,22 +615,12 @@ class Editor(QtWidgets.QWidget, MotionController):
             and motion_overlay is not None
             and motion_overlay.hit_test(scene_pos)
         ):
-            # Hovering the playback controls: leave the cursor and any
-            # node/member highlighting to the overlay itself, the same
-            # reason handle_click() steps aside for it too. An already
-            # in-progress drag or resize is never interrupted by this.
-            return
-        if getattr(self, "_resizing_component", None):
-            self._update_component_resize(scene_pos)
-            self.view.setCursor(QtCore.Qt.CursorShape.SizeFDiagCursor)
+            # Hovering the playback controls: leave highlighting/interaction to overlay
             return
 
-        if self._dragging_nodes:
-            if not any(nid in self.model.nodes for nid in self._dragging_nodes):
-                self._dragging_nodes = []
-                self._drag_ref_node = None
-                self._drag_started = False
-                return
+        if getattr(self, "_resizing_component", None):
+            self._update_component_resize(scene_pos)
+            return
 
         # Update hovered structure for blue dashed box
         comp, rect = self._find_component_at(scene_pos)
@@ -640,32 +630,6 @@ class Editor(QtWidgets.QWidget, MotionController):
                 self.structure_overlay.update()
             except RuntimeError:
                 pass
-
-        # print("DEBUG tool=", self.tool.name, "comp=", bool(comp), "rect=", rect,
-        #       "corner=", bool(comp and rect and self._is_near_box_corner(scene_pos, rect)))
-        # Three states, so hovering always previews what a click-drag would
-        # actually do here: resize at the corner, move at the edge or on a
-        # joint of its own, arrow otherwise.
-        if (
-            self.tool.name == "Select"
-            and comp
-            and rect
-            and self._is_near_box_corner(scene_pos, rect)
-        ):
-            self.view.setCursor(QtCore.Qt.CursorShape.SizeFDiagCursor)
-        elif (
-            self.tool.name == "Select" and comp and rect and self._is_near_box_edge(scene_pos, rect)
-        ):
-            # Open hand means grabbable, closed means held, as everywhere else.
-            self.view.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
-        elif self._dragging_nodes:
-            self.view.setCursor(QtCore.Qt.CursorShape.ClosedHandCursor)
-        else:
-            self.view.setCursor(
-                QtCore.Qt.CursorShape.ArrowCursor
-                if self.tool.name == "Select"
-                else QtCore.Qt.CursorShape.CrossCursor
-            )
 
         if self._dragging_nodes:
             raw_x, raw_y = I.to_model(scene_pos, scale=self.global_scale)
@@ -708,11 +672,12 @@ class Editor(QtWidgets.QWidget, MotionController):
         self.tool.move(snapped, I.to_model(snapped, scale=self.global_scale))
         self._update_snap_marker(scene_pos)
 
+    
+
     def handle_release(self):
         if getattr(self, "_resizing_component", None):
             self._resizing_component = None
             self._resize_comp_initial = {}
-            self.view.unsetCursor()
             self.model_changed()
             return
         if self._dragging_node is not None and self._drag_started:
@@ -722,7 +687,8 @@ class Editor(QtWidgets.QWidget, MotionController):
         self._drag_start_mouse_pos = (0.0, 0.0)
         self._drag_initial_positions = {}
         self._drag_started = False
-        self.view.unsetCursor()
+
+    
 
     def item_at(self, scene_pos):
         """Find entity item under scene_pos using screen-pixel tolerance."""
