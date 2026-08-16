@@ -135,7 +135,9 @@ class MotorItem(_Item):
         mo = self.motor()
         if mo is None:
             return
-        form = P.PopupForm()
+        from .commands import icon_path
+
+        form = P.PopupForm("Edit Motor", icon_path("tool_motor.svg"))
         form.add_spin(
             "Speed",
             mo.speed,
@@ -144,13 +146,14 @@ class MotorItem(_Item):
             hi=100000,
             decimals=2,
             suffix="deg/s",
-            tooltip="Counter-clockwise is positive.",
+            tooltip="Counter-clockwise is positive. The joint under a motor must be pinned: a motor needs something to turn against.",
         )
         form.add_combo(
             "Motion",
             [(M.CONTINUOUS, "Continuous"), (M.SWEEP, "Sweep back and forth")],
             mo.motion,
             lambda v: self.canvas.edit(lambda: setattr(mo, "motion", v), rebuild=True),
+            tooltip="Type of motion profile",
         )
         if mo.motion == M.SWEEP:
             form.add_spin(
@@ -181,20 +184,20 @@ class MotorItem(_Item):
             lo=0.0,
             decimals=2,
             suffix="s",
-            tooltip="How long it runs once started. 0 means it keeps running "
-            "for the rest of the animation.",
+            tooltip="How long it runs once started. 0 means it keeps running for the rest of the animation.",
         )
         member = self.model.members.get(mo.member)
         if member:
-            form.add_readonly("Drives", member.label)
+            form.add_readonly("Drives member", member.label, tooltip="Member driven by this motor")
         result = getattr(self.canvas, "motion_result", None)
         if result and result.ok:
             peak = result.peak_effort().get(mo.id)
             if peak is not None:
-                form.add_readonly("Peak torque", fmt(peak, "N.mm"))
-        form.add_note(
-            "The joint under a motor must be pinned: a motor needs something to turn against."
-        )
+                form.add_readonly(
+                    "Peak torque",
+                    fmt(peak, "N.mm"),
+                    tooltip="Peak torque needed to drive the applied loads",
+                )
         self.canvas.open_popup(self.anchor_point(), form)
 
 
@@ -321,7 +324,9 @@ class ActuatorItem(_Item):
         ac = self.actuator()
         if ac is None:
             return
-        form = P.PopupForm()
+        from .commands import icon_path
+
+        form = P.PopupForm("Edit Actuator", icon_path("tool_actuator.svg"))
         form.add_spin(
             "Stroke",
             ac.stroke,
@@ -340,6 +345,7 @@ class ActuatorItem(_Item):
             hi=100000,
             decimals=2,
             suffix="mm/s",
+            tooltip="Speed of actuation",
         )
         form.add_combo(
             "Motion",
@@ -350,6 +356,7 @@ class ActuatorItem(_Item):
             ],
             ac.motion,
             lambda v: self.canvas.edit(lambda: setattr(ac, "motion", v)),
+            tooltip="Type of motion profile",
         )
         form.add_spin(
             "Starts at",
@@ -369,42 +376,39 @@ class ActuatorItem(_Item):
             lo=0.0,
             decimals=2,
             suffix="s",
-            tooltip="How long it runs once started. 0 means it keeps running "
-            "for the rest of the animation.",
+            tooltip="How long it runs once started. 0 means it keeps running for the rest of the animation.",
         )
         member = self.model.members.get(ac.member)
         if member:
-            form.add_readonly("Closed length", f"{self.model.member_length(member):,.1f} mm")
+            form.add_readonly(
+                "Closed length",
+                f"{self.model.member_length(member):,.1f} mm",
+                tooltip="Original length of the member",
+            )
         result = getattr(self.canvas, "motion_result", None)
         if result and result.ok:
             peak = result.peak_effort().get(ac.id)
             if peak is not None:
                 way = "push" if peak > 0 else "pull"
-                form.add_readonly("Peak force", f"{fmt(abs(peak), 'N')} {way}")
-                form.add_readonly("Force now", self._label(ac)[0])
-                form.add_note(
-                    "Force needed to drive the applied loads, from virtual "
-                    "work: positive pushes, negative pulls. Size the ram on "
-                    "the peak, and add your own margin for friction and for "
-                    "getting it moving, which this does not include."
+                form.add_readonly(
+                    "Peak force",
+                    f"{fmt(abs(peak), 'N')} {way}",
+                    tooltip="Force needed to drive the applied loads, from virtual work: positive pushes, negative pulls. Size the ram on the peak, and add your own margin for friction and for getting it moving, which this does not include.",
                 )
-            else:
-                form.add_note("Run the motion to see the force it needs.")
-        else:
-            form.add_note("Run the motion to see the force it needs.")
+                form.add_readonly(
+                    "Force now",
+                    self._label(ac)[0],
+                    tooltip="Force required at current position. Run the motion to see the force it needs.",
+                )
 
         form.add_section("Solve for a target")
 
         def solve_button(text, callback):
-            btn = QtWidgets.QPushButton(text)
-            btn.setStyleSheet(
-                "QPushButton { background: #1565c0; color: white; font-weight: bold; "
-                "border-radius: 4px; padding: 6px 12px; font-size: 11px; }"
-                "QPushButton:hover { background: #0d47a1; }"
+            return form.add_button(
+                text,
+                callback,
+                tooltip="Solves for the stroke that reaches the target and sets it directly. If it says no stroke reaches the target, that target is outside what this mechanism can actually do.",
             )
-            btn.clicked.connect(callback)
-            form._form.addRow(btn)
-            return btn
 
         members = sorted(self.model.members.values(), key=lambda x: x.id)
         if members:
@@ -414,6 +418,7 @@ class ActuatorItem(_Item):
                 [(m.id, m.label) for m in members],
                 angle_state["member"],
                 lambda v: angle_state.__setitem__("member", v),
+                tooltip="Member to target",
             )
             form.add_spin(
                 "To angle",
@@ -444,6 +449,7 @@ class ActuatorItem(_Item):
                 [(n.id, n.label) for n in nodes],
                 travel_state["node"],
                 lambda v: travel_state.__setitem__("node", v),
+                tooltip="Joint to target",
             )
             form.add_spin(
                 "Travel",
@@ -452,9 +458,7 @@ class ActuatorItem(_Item):
                 lo=0.0,
                 decimals=1,
                 suffix="mm",
-                tooltip="Distance from its drawn position, along whatever "
-                "path it actually takes -- not a straight-line x,y "
-                "target, since one ram is one degree of freedom.",
+                tooltip="Distance from its drawn position, along whatever path it actually takes -- not a straight-line x,y target, since one ram is one degree of freedom.",
             )
 
             def solve_travel():
@@ -466,12 +470,6 @@ class ActuatorItem(_Item):
                 self.canvas.set_prompt(msg)
 
             solve_button("Set stroke for this travel", solve_travel)
-
-        form.add_note(
-            "Solves for the stroke that reaches the target and sets it "
-            "directly. If it says no stroke reaches the target, that "
-            "target is outside what this mechanism can actually do."
-        )
 
         self.canvas.open_popup(_scene_pos, form)
 
@@ -1440,6 +1438,7 @@ class ScheduleOverlay(QtWidgets.QGraphicsItem):
             painter.drawLine(QtCore.QPointF(w - i, h), QtCore.QPointF(w, h - i))
         painter.restore()
 
+
 class DriverPreview(QtWidgets.QGraphicsItem):
     """A faint ghost of the driver the tool is about to place.
 
@@ -1636,132 +1635,6 @@ def motion_tools(canvas):
 
 
 # === playback
-
-
-class MotionBar(QtWidgets.QFrame):
-    """Transport controls, floating at the foot of the canvas."""
-
-    def __init__(self, editor):
-        super().__init__()
-        self.editor = editor
-        self.setObjectName("HUD")
-        self.setStyleSheet("""
-            QFrame#HUD {
-                background-color: rgba(255, 255, 255, 240);
-                border: 1px solid #c3c8d2;
-                border-radius: 8px;
-            }
-            QPushButton {
-                background: transparent; border: none; border-radius: 5px;
-                padding: 6px 12px; color: #5b6270; font-weight: bold;
-                font-family: "DejaVu Sans", sans-serif; font-size: 11px;
-            }
-            QPushButton:hover { background: rgba(0,0,0,12); color: #1d2025; }
-            QPushButton:checked { background: #e0f2f1; color: #00695c; }
-            QPushButton:disabled { color: #b8bec9; }
-            QLabel { color: #5b6270; font-size: 11px; font-family: "DejaVu Sans"; }
-            QSlider::groove:horizontal { height: 3px; background: #c3c8d2; }
-            QSlider::handle:horizontal {
-                background: #00897b; width: 11px; margin: -5px 0;
-                border-radius: 5px;
-            }
-        """)
-        layout = QtWidgets.QHBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(6)
-
-        self.btn_run = QtWidgets.QPushButton("Run")
-        self.btn_run.setToolTip("Solve the motion and play it")
-        self.btn_run.clicked.connect(editor.run_motion)
-        layout.addWidget(self.btn_run)
-
-        self.btn_play = QtWidgets.QPushButton("Play")
-        self.btn_play.setCheckable(True)
-        self.btn_play.clicked.connect(editor.toggle_play)
-        layout.addWidget(self.btn_play)
-
-        self.slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
-        self.slider.setMinimumWidth(220)
-        self.slider.setRange(0, 1000)
-        self.slider.valueChanged.connect(self._scrub)
-        layout.addWidget(self.slider)
-
-        self.time_label = QtWidgets.QLabel("0.00 s")
-        self.time_label.setMinimumWidth(52)
-        layout.addWidget(self.time_label)
-
-        self.btn_trace = QtWidgets.QPushButton("Trace")
-        self.btn_trace.setCheckable(True)
-        self.btn_trace.clicked.connect(editor.toggle_trace)
-        layout.addWidget(self.btn_trace)
-
-        self.btn_static = QtWidgets.QPushButton("Statics")
-        self.btn_static.setToolTip(
-            "Show the static solve on the toolbar again, without clearing this run."
-        )
-        self.btn_static.clicked.connect(lambda: editor.set_display_mode("static"))
-        layout.addWidget(self.btn_static)
-
-        self.btn_graph = QtWidgets.QPushButton("Graph")
-        self.btn_graph.setCheckable(True)
-        self.btn_graph.setToolTip("Effort against travel, for every driver at once")
-        self.btn_graph.clicked.connect(editor.toggle_graph)
-        layout.addWidget(self.btn_graph)
-
-        self.btn_schedule = QtWidgets.QPushButton("Schedule")
-        self.btn_schedule.setCheckable(True)
-        self.btn_schedule.setToolTip("Choreograph when each driver runs")
-        self.btn_schedule.clicked.connect(editor.toggle_schedule)
-        layout.addWidget(self.btn_schedule)
-
-        self.btn_clear = QtWidgets.QPushButton("Clear")
-        self.btn_clear.setToolTip("Take the run off the page. The diagram is untouched.")
-        self.btn_clear.clicked.connect(editor.clear_motion)
-        layout.addWidget(self.btn_clear)
-
-        self.status = QtWidgets.QLabel("")
-        layout.addWidget(self.status)
-
-    def _scrub(self, value):
-        result = self.editor.motion_result
-        if not result or not result.frames:
-            return
-        self.editor.set_motion_time(result.duration * value / 1000.0)
-
-    def sync_state(self):
-        editor = self.editor
-        result = editor.motion_result
-        has = bool(result and result.ok and result.frames)
-        driven = editor.model.has_drivers()
-        self.btn_run.setEnabled(driven)
-        self.btn_play.setEnabled(has)
-        self.slider.setEnabled(has)
-        self.btn_trace.setEnabled(has)
-        self.btn_graph.setEnabled(has)
-        self.btn_clear.setEnabled(has)
-        self.btn_static.setEnabled(has and editor._display_mode == "motion")
-        self.btn_schedule.setEnabled(bool(editor.model.motors) or bool(editor.model.actuators))
-        for button, checked in (
-            (self.btn_play, editor.playing),
-            (self.btn_trace, editor.model.motion.trace),
-            (self.btn_graph, editor.show_graph),
-            (self.btn_schedule, editor.show_schedule),
-        ):
-            button.blockSignals(True)
-            button.setChecked(checked)
-            button.blockSignals(False)
-        self.btn_play.setText("Pause" if editor.playing else "Play")
-        self.time_label.setText(f"{editor.motion_time:.2f} s")
-        if has:
-            self.slider.blockSignals(True)
-            self.slider.setValue(int(1000 * editor.motion_time / max(1e-6, result.duration)))
-            self.slider.blockSignals(False)
-        message = ""
-        if result and not result.ok:
-            message = result.message
-        elif not driven:
-            message = "Add a motor or an actuator"
-        self.status.setText(message)
 
 
 class MotionController:

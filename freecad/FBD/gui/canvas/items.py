@@ -301,24 +301,24 @@ class NodeItem(_Item):
         node = self.node()
         if node is None:
             return
-        form = P.PopupForm()
+        from ..commands import icon_path
+        form = P.PopupForm("Edit Joint", icon_path("tool_node.svg"))
         form.add_text(
-            "Name", node.label, lambda v: self.canvas.edit(lambda: setattr(node, "label", v))
+            "Name", node.label, lambda v: self.canvas.edit(lambda: setattr(node, "label", v)),
+            tooltip="Name of the joint"
         )
         form.add_spin(
-            "X", node.x, lambda v: self.canvas.edit(lambda: setattr(node, "x", v)), suffix="mm"
+            "X coordinate", node.x, lambda v: self.canvas.edit(lambda: setattr(node, "x", v)), suffix="mm", tooltip="X coordinate"
         )
         form.add_spin(
-            "Y", node.y, lambda v: self.canvas.edit(lambda: setattr(node, "y", v)), suffix="mm"
+            "Y coordinate", node.y, lambda v: self.canvas.edit(lambda: setattr(node, "y", v)), suffix="mm", tooltip="Y coordinate"
         )
         form.add_combo(
             "Connection",
             [(False, "Free (hinges)"), (True, "Rigid (welded)")],
             node.rigid,
             lambda v: self.canvas.edit(lambda: setattr(node, "rigid", v), rebuild=True),
-            tooltip="Rigid welds every member meeting here into one body, without "
-            "grounding the joint itself. For a joint fixed to the world, use "
-            "a Fixed support instead.",
+            tooltip="Rigid welds every member meeting here into one body, without grounding the joint itself. For a joint fixed to the world, use a Fixed support instead.",
         )
         self.canvas.open_popup(self.anchor_point(), form)
 
@@ -433,11 +433,13 @@ class MemberItem(_Item):
         if member is None:
             return
         model = self.canvas.model
-        form = P.PopupForm()
+        from ..commands import icon_path
+        form = P.PopupForm("Edit Member", icon_path("tool_member.svg"))
         form.add_text(
-            "Name", member.label, lambda v: self.canvas.edit(lambda: setattr(member, "label", v))
+            "Name", member.label, lambda v: self.canvas.edit(lambda: setattr(member, "label", v)),
+            tooltip="Name of the member"
         )
-        form.add_readonly("Length", f"{model.member_length(member):,.1f} mm")
+        form.add_readonly("Length", f"{model.member_length(member):,.1f} mm", tooltip="Length of the member")
         form.add_section("Stiffness")
         form.add_spin(
             "EA",
@@ -446,6 +448,7 @@ class MemberItem(_Item):
             lo=1.0,
             decimals=0,
             suffix="N",
+            tooltip="Axial stiffness (EA). Only changes the answer for statically indeterminate structures."
         )
         form.add_spin(
             "EI",
@@ -454,6 +457,7 @@ class MemberItem(_Item):
             lo=1.0,
             decimals=0,
             suffix="N.mm2",
+            tooltip="Bending stiffness (EI). Only changes the answer for statically indeterminate structures."
         )
         form.add_section("Behaviour")
         form.add_combo(
@@ -471,6 +475,7 @@ class MemberItem(_Item):
                 lambda v, a=attr: self.canvas.edit(
                     lambda: setattr(member, a, bool(v)), rebuild=True
                 ),
+                tooltip=f"Moment release at {label.split()[0].lower()}"
             )
         form.add_spin(
             "Mp start",
@@ -489,6 +494,7 @@ class MemberItem(_Item):
             lo=0.0,
             decimals=4,
             suffix="N/mm",
+            tooltip="Self weight downward force per unit length. Only changes the answer for statically indeterminate structures."
         )
         form.add_spin(
             "Mass",
@@ -497,12 +503,7 @@ class MemberItem(_Item):
             lo=0.0,
             decimals=3,
             suffix="kg",
-            tooltip="Only used by Run Motion: a fast-moving link's own "
-            "inertia adds to the force its driver needs.",
-        )
-        form.add_note(
-            "EA, EI and self weight only change the answer for a statically "
-            "indeterminate structure. Mass only matters in Run Motion."
+            tooltip="Only used by Run Motion: a fast-moving link's own inertia adds to the force its driver needs.",
         )
         self.canvas.open_popup(_scene_pos, form)
 
@@ -647,7 +648,9 @@ class SupportItem(_Item):
         support = self.support()
         if support is None:
             return
-        form = P.PopupForm()
+        from ..commands import icon_path
+        icon_name = f"tool_{support.kind if support.kind in ('pin', 'fixed', 'spring') else 'roller'}.svg"
+        form = P.PopupForm("Edit Support", icon_path(icon_name))
         form.add_combo(
             "Type",
             [(k, M.SUPPORT_LABELS[k]) for k in M.SUPPORT_KINDS],
@@ -667,9 +670,9 @@ class SupportItem(_Item):
         )
         if support.kind == M.SPRING:
             for label, attr, unit in (
-                ("kx", "kx", "N/mm"),
-                ("ky", "ky", "N/mm"),
-                ("kr", "kr", "N.mm/rad"),
+                ("Spring kx", "kx", "N/mm"),
+                ("Spring ky", "ky", "N/mm"),
+                ("Spring kr", "kr", "N.mm/rad"),
             ):
                 form.add_spin(
                     label,
@@ -752,8 +755,9 @@ class AnchorItem(_Item):
         if a is None:
             return
         member = self.model.members.get(a.member)
-        form = P.PopupForm()
-        form.add_text("Name", a.label, lambda v: self.canvas.edit(lambda: setattr(a, "label", v)))
+        from ..commands import icon_path
+        form = P.PopupForm("Edit Point", icon_path("tool_anchor.svg"))
+        form.add_text("Name", a.label, lambda v: self.canvas.edit(lambda: setattr(a, "label", v)), tooltip="Name of the point")
         form.add_spin(
             "Position",
             a.t * 100.0,
@@ -762,11 +766,10 @@ class AnchorItem(_Item):
             hi=100.0,
             decimals=1,
             suffix="%",
-            tooltip="Distance along the member from its start, as a percentage.",
+            tooltip="Distance along the member from its start, as a percentage. Loads can attach here the same as to a joint.",
         )
         if member:
-            form.add_readonly("Along", member.label)
-        form.add_note("Loads can attach here the same as to a joint.")
+            form.add_readonly("Along member", member.label, tooltip="Member this point lies on")
         self.canvas.open_popup(self.anchor_point(), form)
 
 
@@ -1039,13 +1042,15 @@ class PointLoadItem(_Item):
         l = self.load()
         if l is None:
             return
-        form = P.PopupForm()
+        from ..commands import icon_path
+        form = P.PopupForm("Edit Force", icon_path("tool_force.svg"))
         form.add_spin(
             "Fx",
             l.fx,
             lambda v: self.canvas.edit(lambda: setattr(l, "fx", v)),
             decimals=2,
             suffix="N",
+            tooltip="Horizontal force. Drag the small circle on the arrow to rotate it. Applied loads draw red."
         )
         form.add_spin(
             "Fy",
@@ -1053,9 +1058,9 @@ class PointLoadItem(_Item):
             lambda v: self.canvas.edit(lambda: setattr(l, "fy", v)),
             decimals=2,
             suffix="N",
+            tooltip="Vertical force. Drag the small circle on the arrow to rotate it. Applied loads draw red."
         )
-        form.add_readonly("Magnitude", f"{l.magnitude():,.1f} N")
-        form.add_note("Drag the small circle on the arrow to rotate it. Applied loads draw red.")
+        form.add_readonly("Magnitude", f"{l.magnitude():,.1f} N", tooltip="Total force magnitude")
         self.canvas.open_popup(_scene_pos, form)
 
 
@@ -1106,9 +1111,10 @@ class MomentLoadItem(_Item):
         l = self.load()
         if l is None:
             return
-        form = P.PopupForm()
+        from ..commands import icon_path
+        form = P.PopupForm("Edit Moment", icon_path("tool_moment.svg"))
         form.add_spin(
-            "M",
+            "Moment",
             l.m,
             lambda v: self.canvas.edit(lambda: setattr(l, "m", v)),
             decimals=2,
@@ -1298,9 +1304,10 @@ class LineLoadItem(_Item):
         l = self.load()
         if l is None:
             return
-        form = P.PopupForm()
+        from ..commands import icon_path
+        form = P.PopupForm("Edit Line Load", icon_path("tool_lineload.svg"))
         form.add_spin(
-            "q",
+            "Load q",
             l.q,
             lambda v: self.canvas.edit(lambda: setattr(l, "q", v)),
             decimals=4,
@@ -1316,11 +1323,12 @@ class LineLoadItem(_Item):
             ],
             l.direction,
             lambda v: self.canvas.edit(lambda: setattr(l, "direction", v)),
+            tooltip="Direction of the distributed load"
         )
         member = self.model.members.get(l.member)
         if member:
             total = abs(l.q) * self.model.member_length(member)
-            form.add_readonly("Total", f"{total:,.1f} N")
+            form.add_readonly("Total load", f"{total:,.1f} N", tooltip="Total equivalent point load magnitude")
         self.canvas.open_popup(_scene_pos, form)
 
 

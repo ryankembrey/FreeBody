@@ -233,7 +233,7 @@ ok("observers fire", _fired(ed8))
 print()
 
 
-print("9. On-page popup: opens, edits, closes, never blocks other edits")
+print("9. Task Panel popup: opens, edits, closes")
 ed9 = Editor(M.Model(), host=Host())
 n9a = ed9.model.add_node(0, 0)
 ed9.rebuild()
@@ -243,9 +243,7 @@ node_item.open_editor(node_item.anchor_point())
 ok("popup opens", ed9._popup is not None)
 ok("undo pushed once on open", len(ed9._undo) == 1, len(ed9._undo))
 from freecad.FBD.gui.canvas import items as I9
-ok("popup_hit true inside its own bounds",
-   ed9.popup_hit(ed9._popup.sceneBoundingRect().center()))
-ok("popup_hit false far away", not ed9.popup_hit(I9.to_scene(5000, 5000)))
+ok("popup_hit always false for Task Panel", not ed9.popup_hit(I9.to_scene(5000, 5000)))
 ed9.close_popup()
 ok("popup closes", ed9._popup is None)
 # Escape closes an open popup rather than falling through to the tool

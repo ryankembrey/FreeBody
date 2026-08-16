@@ -14,66 +14,32 @@ time, dismissed by clicking elsewhere or pressing Escape.
 from PySide6 import QtCore, QtGui, QtWidgets
 
 
-class PopupForm(QtWidgets.QFrame):
-    """A small bordered form styled to sit on the page rather than look like
-    an application dialog.
+class PopupForm(QtWidgets.QWidget):
+    """A form styled to sit in a FreeCAD Task Panel."""
 
-    Every row shares the same label and field column widths, FreeCAD
-    property-editor style, so values line up between rows and between
-    different entities' popups instead of each control sizing itself to
-    its own content.
-    """
-
-    LABEL_W = 190  # px: shared label-cell width, every popup lines up.
-    FIELD_W = 190  # px: shared value-field width. Equal 1:1 columns; the
-    # value column's own width is set by the widest thing that actually
-    # has to fit in it -- the rendered width of "Compression only
-    # (strut)" as a real QComboBox, padding and arrow included, measures
-    # 178px, so 190px leaves it a little room rather than sitting right
-    # at the edge.
-
-    def __init__(self):
+    def __init__(self, title="", icon_path=""):
         super().__init__()
-        self.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
-        self.setAutoFillBackground(True)
-        self.setFixedWidth(self.LABEL_W + self.FIELD_W + 16)
-        self.setStyleSheet(
-            "QFrame { background: #fdfdfc; border: 1px solid #a9afba; }"
-            "QLabel#RowLabel {"
-            "    color: #37474f; font-size: 12px; background: #eef0f3;"
-            "    border-right: 1px solid #d7dbe1; padding: 3px 6px; }"
-            "QLabel#Note {"
-            "    color: #5b6270; font-size: 11px; padding: 6px 8px;"
-            "    background: #f4f6f8; border: 1px solid #e3e6ea;"
-            "    border-radius: 4px; margin-top: 4px; }"
-            "QLabel#Section {"
-            "    color: #37474f; font-size: 10.5px; font-weight: bold;"
-            "    letter-spacing: 0.6px;"
-            "    padding: 8px 6px 3px 6px; border-top: 1px solid #e3e6ea;"
-            "    margin-top: 3px; }"
-            "QDoubleSpinBox, QComboBox, QLineEdit {"
-            "    font-size: 12px; min-height: 20px; padding: 1px 4px; }"
-            "QLineEdit:read-only { background: #f1f2f4; color: #5b6270; }"
-        )
-        self._form = QtWidgets.QFormLayout(self)
-        self._form.setContentsMargins(0, 6, 6, 6)
-        self._form.setHorizontalSpacing(0)
-        self._form.setVerticalSpacing(2)
-        self._form.setLabelAlignment(
-            QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter
-        )
-        self._form.setFieldGrowthPolicy(
-            QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
-        )
-        self._form.setFormAlignment(
-            QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop
-        )
+        if title:
+            self.setWindowTitle(title)
+        if icon_path:
+            self.setWindowIcon(QtGui.QIcon(icon_path))
 
-    def _row_label(self, text):
-        lbl = QtWidgets.QLabel(text)
-        lbl.setObjectName("RowLabel")
-        lbl.setFixedWidth(self.LABEL_W)
-        return lbl
+        self._main_layout = QtWidgets.QVBoxLayout(self)
+        self._main_layout.setContentsMargins(4, 6, 4, 6)
+        self._main_layout.setSpacing(6)
+
+        self._current_layout = self._create_grid_layout()
+        self._main_layout.addLayout(self._current_layout)
+        self._row_index = 0
+
+    def _create_grid_layout(self):
+        layout = QtWidgets.QGridLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setHorizontalSpacing(8)
+        layout.setVerticalSpacing(4)
+        layout.setColumnStretch(0, 1)
+        layout.setColumnStretch(1, 1)
+        return layout
 
     def _stretch(self, widget):
         widget.setSizePolicy(
@@ -81,8 +47,18 @@ class PopupForm(QtWidgets.QFrame):
         )
         return widget
 
-    def add_spin(self, label, value, setter, lo=-1e12, hi=1e12, decimals=3,
-                suffix="", tooltip=""):
+    def _add_row(self, label_text, widget):
+        lbl = QtWidgets.QLabel(label_text)
+        self._current_layout.addWidget(
+            lbl,
+            self._row_index,
+            0,
+            QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter,
+        )
+        self._current_layout.addWidget(widget, self._row_index, 1)
+        self._row_index += 1
+
+    def add_spin(self, label, value, setter, lo=-1e12, hi=1e12, decimals=3, suffix="", tooltip=""):
         box = QtWidgets.QDoubleSpinBox()
         box.setRange(lo, hi)
         box.setDecimals(decimals)
@@ -94,7 +70,7 @@ class PopupForm(QtWidgets.QFrame):
         if tooltip:
             box.setToolTip(tooltip)
         box.valueChanged.connect(setter)
-        self._form.addRow(self._row_label(label), box)
+        self._add_row(label, box)
         return box
 
     def add_combo(self, label, options, current, setter, tooltip=""):
@@ -107,45 +83,48 @@ class PopupForm(QtWidgets.QFrame):
         if tooltip:
             combo.setToolTip(tooltip)
         combo.currentIndexChanged.connect(lambda i: setter(combo.itemData(i)))
-        self._form.addRow(self._row_label(label), combo)
+        self._add_row(label, combo)
         return combo
 
-    def add_text(self, label, value, setter):
+    def add_text(self, label, value, setter, tooltip=""):
         edit = QtWidgets.QLineEdit(value)
         self._stretch(edit)
+        if tooltip:
+            edit.setToolTip(tooltip)
         edit.editingFinished.connect(lambda: setter(edit.text()))
-        self._form.addRow(self._row_label(label), edit)
+        self._add_row(label, edit)
         return edit
 
-    def add_readonly(self, label, text):
+    def add_readonly(self, label, text, tooltip=""):
         edit = QtWidgets.QLineEdit(str(text))
         edit.setReadOnly(True)
         edit.setCursorPosition(0)
         self._stretch(edit)
-        self._form.addRow(self._row_label(label), edit)
+        if tooltip:
+            edit.setToolTip(tooltip)
+        self._add_row(label, edit)
         return edit
 
     def add_section(self, title):
-        """A small heading row, so a long form reads as a few labelled
-        groups instead of one flat column of undifferentiated rows."""
-        lbl = QtWidgets.QLabel(title.upper())
-        lbl.setObjectName("Section")
-        self._form.addRow(lbl)
-        return lbl
+        group_box = QtWidgets.QGroupBox(title)
+        group_layout = self._create_grid_layout()
+        group_layout.setContentsMargins(4, 8, 4, 4)
+        group_box.setLayout(group_layout)
+        self._main_layout.addWidget(group_box)
 
-    def add_note(self, text):
-        note = QtWidgets.QLabel(text)
-        note.setObjectName("Note")
-        note.setWordWrap(True)
-        # Expanding, not a max-width cap: a cap sizes to content and can
-        # leave the note narrower than the row it's in, which is why the
-        # box looked like it stopped short of the right edge. Growing to
-        # fill the row is what actually makes it span the full width.
-        note.setSizePolicy(
-            QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Preferred
-        )
-        self._form.addRow(note)
-        return note
+        self._current_layout = group_layout
+        self._row_index = 0
+        return group_box
+
+    def add_button(self, text, callback, tooltip=""):
+        btn = QtWidgets.QPushButton(text)
+        if tooltip:
+            btn.setToolTip(tooltip)
+        btn.clicked.connect(callback)
+        self._current_layout.addWidget(btn, self._row_index, 0, 1, 2)
+        self._row_index += 1
+        return btn
+
 
 def quick_menu(view: QtWidgets.QGraphicsView, global_pos, options, on_pick):
     """A small QMenu at a global screen position: for a fast one-click choice,
