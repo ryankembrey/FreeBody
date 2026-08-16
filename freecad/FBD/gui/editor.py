@@ -29,6 +29,36 @@ from .motion import MotionController, MotorItem, ActuatorItem
 from .engine_bridge import edit as bridge_edit
 
 
+def _repolish(widget):
+    """Force this popup to pick up the application's own theme.
+
+    FreeCAD's Overlay docking wraps the Tasks panel in a widget
+    that carries its own local stylesheet -- a bare "*" rule
+    setting just its background colour. Any local stylesheet on
+    an ancestor starts a fresh CSS scope for everything below it,
+    and the type-selector rules that actually theme a spin box's
+    up/down buttons or a group box's title do not reliably
+    survive that handoff for widgets several levels further down,
+    which is what leaves this popup with generic Qt chrome
+    instead of the active theme. Re-asserting the application's
+    own stylesheet directly on this form re-roots the CSS scope
+    here, so nothing further up the chain can shadow it; the
+    repolish afterwards is what makes Qt actually repaint
+    against it.
+    """
+    try:
+        app = QtWidgets.QApplication.instance()
+        sheet = app.styleSheet() if app is not None else ""
+        if sheet and widget.styleSheet() != sheet:
+            widget.setStyleSheet(sheet)
+        for w in [widget] + widget.findChildren(QtWidgets.QWidget):
+            w.style().unpolish(w)
+            w.style().polish(w)
+        widget.update()
+    except RuntimeError:
+        pass  # the popup was already closed by the time this ran
+
+
 DIAGRAM_MODES = [
     ("none", "No diagram"),
     ("moment", "Bending moment"),
@@ -1138,6 +1168,7 @@ class Editor(QtWidgets.QWidget, MotionController):
             import FreeCADGui as Gui
 
             Gui.Control.showDialog(self._popup)
+            QtCore.QTimer.singleShot(0, lambda w=widget: _repolish(w))
         except Exception:
             pass
 

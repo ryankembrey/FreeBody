@@ -91,8 +91,20 @@ def motor_angle(motor: Motor, t: float, theta0: float) -> Tuple[float, float]:
 
 
 def actuator_length(actuator: Actuator, t: float, length0: float) -> Tuple[float, float]:
-    """(length, rate of change) in mm and mm per second."""
+    """(length, rate of change) in mm and mm per second.
+
+    start_extended treats the member's own drawn length as the
+    ram's fully extended end rather than its retracted end: the
+    stroke's own sign is flipped, nothing else, so the same three
+    profiles below run unchanged but travel downward from the
+    drawn length instead of upward from it. Without it, length0 is
+    the retracted end and the ram extends out by the stroke; with
+    it, length0 is the sketch's own fully extended pose and the
+    ram contracts in by the stroke.
+    """
     stroke = float(actuator.stroke)
+    if actuator.start_extended:
+        stroke = -stroke
     speed = abs(float(actuator.speed))
     if abs(stroke) < 1e-9 or speed < 1e-12:
         return length0, 0.0
@@ -107,7 +119,7 @@ def actuator_length(actuator: Actuator, t: float, length0: float) -> Tuple[float
     if actuator.motion == SINE:
         period = 2.0 * travel_time
         w = 2.0 * math.pi / period
-        # Starts retracted, eases out, eases back. No jerk at the ends.
+        # Eases out from the home end, eases back. No jerk at either end.
         s = 0.5 * stroke * (1.0 - math.cos(w * t))
         ds = 0.5 * stroke * w * math.sin(w * t)
         return length0 + s, ds

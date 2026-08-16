@@ -332,6 +332,9 @@ class Actuator:
     stroke: float = 100.0  # mm of travel, positive extends
     speed: float = 50.0  # mm/s
     motion: str = CYCLE  # EXTEND, CYCLE or SINE
+    start_extended: bool = False  # begin at full stroke and
+    # contract, rather than begin at the member's own drawn
+    # length and extend
     label: str = ""
     schedule: Schedule = field(default_factory=Schedule)
 

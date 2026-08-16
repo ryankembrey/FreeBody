@@ -359,6 +359,18 @@ class ActuatorItem(_Item):
             lambda v: self.canvas.edit(lambda: setattr(ac, "motion", v)),
             tooltip="Type of motion profile",
         )
+        form.add_combo(
+            "Starting position",
+            [
+                (False, "Retracted, extends first"),
+                (True, "Extended, contracts first"),
+            ],
+            ac.start_extended,
+            lambda v: self.canvas.edit(lambda: setattr(ac, "start_extended", v)),
+            tooltip="Whether the member's drawn length is the ram's "
+            "retracted end, which extends out by the stroke, or its "
+            "fully extended end, which contracts in by the stroke.",
+        )
         form.add_spin(
             "Starts at",
             ac.schedule.start,
