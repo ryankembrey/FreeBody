@@ -1,15 +1,64 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <!-- SPDX-License-Identifier: LGPL-2.1-or-later -->
-<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
-  <rect x="8" y="23" width="28" height="18" rx="2" fill="#ffffff"
-        stroke="#ef6c00" stroke-width="3"/>
-  <line x1="36" y1="32" x2="54" y2="32" stroke="#ef6c00" stroke-width="3.4"
-        stroke-linecap="round"/>
-  <line x1="52" y1="24" x2="52" y2="40" stroke="#ef6c00" stroke-width="3"
-        stroke-linecap="round"/>
-  <circle cx="10" cy="32" r="3.4" fill="#ffffff" stroke="#1d2025" stroke-width="2.4"/>
-  <g stroke="#8a94a6" stroke-width="2" stroke-linecap="round">
-    <line x1="40" y1="14" x2="56" y2="14"/>
-    <path d="M56 14 L50 11 L50 17 Z" fill="#8a94a6" stroke="none"/>
-  </g>
+
+<svg
+   width="64"
+   height="64"
+   viewBox="0 0 64 64"
+   version="1.1"
+   id="svg3"
+   sodipodi:docname="tool_actuator.svg"
+   inkscape:version="1.4.4 (dcaf3e7d9e, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs3" />
+  <sodipodi:namedview
+     id="namedview3"
+     pagecolor="#505050"
+     bordercolor="#eeeeee"
+     borderopacity="1"
+     inkscape:showpageshadow="0"
+     inkscape:pageopacity="0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#505050"
+     inkscape:zoom="7.6795705"
+     inkscape:cx="38.543822"
+     inkscape:cy="33.986276"
+     inkscape:window-width="1908"
+     inkscape:window-height="1022"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="svg3" />
+  <rect
+     x="8"
+     y="23"
+     width="28"
+     height="18"
+     rx="2"
+     fill="#ffffff"
+     stroke="#ef6c00"
+     stroke-width="3"
+     id="rect1" />
+  <line
+     x1="36.647232"
+     y1="32.092461"
+     x2="54.647232"
+     y2="32.092461"
+     stroke="#ef6c00"
+     stroke-width="3.4"
+     stroke-linecap="round"
+     id="line1" />
+  <line
+     x1="54.958778"
+     y1="23.537691"
+     x2="54.958778"
+     y2="39.537693"
+     stroke="#ef6c00"
+     stroke-width="3"
+     stroke-linecap="round"
+     id="line2" />
 </svg>

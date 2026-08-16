@@ -1,7 +1,58 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
-  <path d="M14 26 A18 18 0 0 1 44 14" fill="none" stroke="#1d2025" stroke-width="4.5" stroke-linecap="round"/>
-  <path d="M44 14 L48 24 L36 22 Z" fill="#1d2025"/>
-  <path d="M50 38 A18 18 0 0 1 20 50" fill="none" stroke="#1d2025" stroke-width="4.5" stroke-linecap="round"/>
-  <path d="M20 50 L16 40 L28 42 Z" fill="#1d2025"/>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="64"
+   height="64"
+   viewBox="0 0 64 64"
+   version="1.1"
+   id="svg4"
+   sodipodi:docname="fbd_sync_sketch.svg"
+   inkscape:version="1.4.4 (dcaf3e7d9e, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs4" />
+  <sodipodi:namedview
+     id="namedview4"
+     pagecolor="#505050"
+     bordercolor="#eeeeee"
+     borderopacity="1"
+     inkscape:showpageshadow="0"
+     inkscape:pageopacity="0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#505050"
+     inkscape:zoom="4.9375"
+     inkscape:cx="32"
+     inkscape:cy="32"
+     inkscape:window-width="1908"
+     inkscape:window-height="1022"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="svg4" />
+  <path
+     d="m 14.405063,29.443038 a 18,18 0 0 1 30,-12"
+     fill="none"
+     stroke="#1d2025"
+     stroke-width="4.5"
+     stroke-linecap="round"
+     id="path1" />
+  <path
+     d="m 45.822786,11.569621 4,9.999999 -12,-2 z"
+     fill="#1d2025"
+     id="path2" />
+  <path
+     d="m 49.189873,32.329114 a 18,18 0 0 1 -30,12"
+     fill="none"
+     stroke="#1d2025"
+     stroke-width="4.5"
+     stroke-linecap="round"
+     id="path3" />
+  <path
+     d="m 17.848217,50.260551 -3.324192,-10.244498 11.839904,2.79583 z"
+     fill="#1d2025"
+     id="path4"
+     inkscape:transform-center-x="-0.81012658"
+     inkscape:transform-center-y="0.40506329" />
 </svg>
