@@ -1119,22 +1119,72 @@ class MomentLoadItem(_Item):
 
 
 def draw_moment_arrow(painter, center, radius, ccw, color):
-    """Curved arrow, drawn in whatever space the painter is in."""
-    painter.setPen(QtGui.QPen(color, 1.7))
-    painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+    """Curved moment arrow with a chord-aligned arrowhead capping the arc."""
+    painter.save()
+    painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+    
+    # 1. Arrowhead dimensions and angular span along the circle
+    head_size = max(9.0, radius * 0.40)
+    delta_rad = head_size / max(1.0, radius)
+    delta_deg = math.degrees(delta_rad)
+    
+    # 2. Total sweep 270°. Arc line stops short at base_deg so arrowhead caps it seamlessly.
+    if ccw:
+        start_deg = 45.0
+        arc_span = 270.0 - delta_deg
+        end_deg = 315.0
+        base_deg = end_deg - delta_deg
+    else:
+        start_deg = 135.0
+        arc_span = -(270.0 - delta_deg)
+        end_deg = 225.0
+        base_deg = end_deg + delta_deg
+
+    # 3. Draw Arc Line (terminating at base_deg)
     rect = QtCore.QRectF(center.x() - radius, center.y() - radius, 2 * radius, 2 * radius)
-    start = 40 * 16
-    span = (260 * 16) if ccw else (-260 * 16)
-    painter.drawArc(rect, start, span)
-    end_deg = math.radians(-(40 + (260 if ccw else -260)))
-    hx = center.x() + radius * math.cos(end_deg)
-    hy = center.y() + radius * math.sin(end_deg)
-    tangent = end_deg + (-math.pi / 2 if ccw else math.pi / 2)
+    pen = QtGui.QPen(color, 1.8)
+    pen.setCosmetic(True)
+    painter.setPen(pen)
+    painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+    painter.drawArc(rect, int(round(start_deg * 16)), int(round(arc_span * 16)))
+
+    # 4. Positions of Arrowhead Base and Tip
+    base_rad = math.radians(base_deg)
+    end_rad = math.radians(end_deg)
+
+    bx = center.x() + radius * math.cos(base_rad)
+    by = center.y() - radius * math.sin(base_rad)
+
+    tx = center.x() + radius * math.cos(end_rad)
+    ty = center.y() - radius * math.sin(end_rad)
+
+    # 5. Unit Direction Vector from Base to Tip
+    dx = tx - bx
+    dy = ty - by
+    dist = math.hypot(dx, dy)
+    if dist < 1e-6:
+        painter.restore()
+        return
+
+    ux = dx / dist
+    uy = dy / dist
+
+    # 6. Perpendicular Vector for Arrowhead Base Width
+    px = -uy
+    py = ux
+    half_width = head_size * 0.36
+
+    # 7. Construct Arrowhead Polygon (Tip -> Right Base -> Left Base)
     path = QtGui.QPainterPath()
-    _arrow_head(path, QtCore.QPointF(hx, hy), math.cos(tangent), math.sin(tangent), radius * 0.5)
+    path.moveTo(QtCore.QPointF(tx, ty))
+    path.lineTo(QtCore.QPointF(bx + px * half_width, by + py * half_width))
+    path.lineTo(QtCore.QPointF(bx - px * half_width, by - py * half_width))
+    path.closeSubpath()
+
     painter.setBrush(color)
     painter.setPen(QtCore.Qt.PenStyle.NoPen)
     painter.drawPath(path)
+    painter.restore()
 
 
 class LineLoadItem(_Item):
