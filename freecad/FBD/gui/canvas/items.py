@@ -40,19 +40,58 @@ def to_model(pt, scale=1.0):
     return (float(pt.x()) * sc, -float(pt.y()) * sc)
 
 
-def direction_from_handle(mx, my, magnitude):
-    """Given the tail handle dragged to local (device-pixel) point (mx, my),
-    return the (fx, fy) that puts the tail there, keeping magnitude fixed.
+def format_angle_label(deg):
+    deg = deg % 360.0
+    norm = round(deg, 1)
+    if norm.is_integer():
+        return f"{int(norm)}°"
+    return f"{norm:.1f}°"
 
-    Local space is screen pixels (y down); model space is y up. Pure geometry,
-    no Qt dependency, so the drag-to-rotate interaction is testable without a
-    running event loop.
-    """
+
+def direction_from_handle_snapped(mx, my, magnitude, modifiers=None):
     r = math.hypot(mx, my)
     if r < 1e-9:
-        return 0.0, 0.0
-    ux, uy = -mx / r, -my / r  # local travel direction, tail -> tip
-    return magnitude * ux, -magnitude * uy
+        return 0.0, 0.0, 0.0, False
+
+    raw_math_rad = math.atan2(my / r, -mx / r)
+    raw_math_deg = math.degrees(raw_math_rad) % 360.0
+    raw_angle_from_down = (raw_math_deg + 90.0) % 360.0
+
+    shift_held = False
+    ctrl_held = False
+    if modifiers is not None:
+        shift_held = bool(modifiers & QtCore.Qt.KeyboardModifier.ShiftModifier)
+        ctrl_held = bool(modifiers & (QtCore.Qt.KeyboardModifier.ControlModifier | QtCore.Qt.KeyboardModifier.AltModifier))
+
+    if ctrl_held:
+        final_angle_from_down = raw_angle_from_down
+        is_snapped = False
+    elif shift_held:
+        step = 45.0
+        final_angle_from_down = round(raw_angle_from_down / step) * step % 360.0
+        is_snapped = True
+    else:
+        candidate = round(raw_angle_from_down / 15.0) * 15.0 % 360.0
+        diff = abs((raw_angle_from_down - candidate + 180.0) % 360.0 - 180.0)
+        thresh = 6.0 if (candidate % 45.0 == 0) else 4.0
+        if diff <= thresh:
+            final_angle_from_down = candidate
+            is_snapped = True
+        else:
+            final_angle_from_down = raw_angle_from_down
+            is_snapped = False
+
+    final_math_deg = (final_angle_from_down - 90.0) % 360.0
+    math_rad = math.radians(final_math_deg)
+    
+    fx = magnitude * math.cos(math_rad)
+    fy = magnitude * math.sin(math_rad)
+    return fx, fy, final_angle_from_down, is_snapped
+
+
+def direction_from_handle(mx, my, magnitude):
+    fx, fy, _deg, _snapped = direction_from_handle_snapped(mx, my, magnitude, modifiers=None)
+    return fx, fy
 
 
 def fmt(value, unit=""):
@@ -735,6 +774,8 @@ class PointLoadItem(_Item):
         self.setZValue(40)
         self.setAcceptHoverEvents(True)
         self._rotating = False
+        self._current_angle = 0.0
+        self._is_snapped = False
         self.sync()
 
     def load(self):
@@ -763,7 +804,7 @@ class PointLoadItem(_Item):
         return QtCore.QPointF(-ux * self.LEN, -uy * self.LEN)
 
     def boundingRect(self):
-        r = self.LEN + 24
+        r = self.LEN + 50.0
         return QtCore.QRectF(-r, -r, 2 * r, 2 * r)
 
     def _components(self):
@@ -811,6 +852,65 @@ class PointLoadItem(_Item):
             stroke.addPath(handle)
         return stroke
 
+    def _paint_rotation_guides(self, painter, ux, uy, tail):
+        painter.save()
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        
+        r = self.LEN
+        
+        # 1. Subtle dashed protractor circle around tip (0, 0)
+        circle_pen = QtGui.QPen(QtGui.QColor(180, 190, 205, 120), 1.0, QtCore.Qt.PenStyle.DashLine)
+        circle_pen.setCosmetic(True)
+        painter.setPen(circle_pen)
+        painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(QtCore.QPointF(0, 0), r, r)
+        
+        # 2. Radial guide rays for 8 major directions (0, 45, 90, 135, 180, 225, 270, 315 relative to down)
+        ray_pen = QtGui.QPen(QtGui.QColor(180, 190, 205, 100), 1.0, QtCore.Qt.PenStyle.DashLine)
+        ray_pen.setCosmetic(True)
+        painter.setPen(ray_pen)
+        
+        for angle_from_down in (0, 45, 90, 135, 180, 225, 270, 315):
+            math_rad = math.radians(angle_from_down - 90.0)
+            tx = -math.cos(math_rad) * r
+            ty = math.sin(math_rad) * r
+            painter.drawLine(QtCore.QPointF(tx * 0.8, ty * 0.8), QtCore.QPointF(tx * 1.1, ty * 1.1))
+            
+        # 3. Handle Ring (Selection blue S.SELECT)
+        ring_col = S.SELECT
+        painter.setPen(QtGui.QPen(ring_col, 2.0))
+        painter.setBrush(QtGui.QColor(255, 255, 255, 240))
+        painter.drawEllipse(tail, self.HANDLE_R * 1.15, self.HANDLE_R * 1.15)
+        
+        # 4. Angle text OUTWARD of the circle (beyond tail handle, screen-constant font size)
+        angle_deg = getattr(self, "_current_angle", 0.0)
+        text = format_angle_label(angle_deg)
+        
+        offset = self.HANDLE_R + 14.0
+        text_pos = QtCore.QPointF(-ux * (self.LEN + offset), -uy * (self.LEN + offset))
+        
+        f = S.font(13.0, bold=True)
+        metrics = QtGui.QFontMetricsF(f)
+        rect = metrics.boundingRect(text)
+        
+        x = text_pos.x() - rect.width() / 2.0
+        y = text_pos.y() + metrics.capHeight() / 2.0
+        
+        path = QtGui.QPainterPath()
+        path.addText(x, y, f, text)
+        
+        # White background stroke halo for crisp contrast
+        painter.setPen(QtGui.QPen(S.PAPER, 3.0, QtCore.Qt.PenStyle.SolidLine, QtCore.Qt.PenCapStyle.RoundCap, QtCore.Qt.PenJoinStyle.RoundJoin))
+        painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+        painter.drawPath(path)
+        
+        # Text fill in selection blue
+        painter.setPen(QtCore.Qt.PenStyle.NoPen)
+        painter.setBrush(S.SELECT)
+        painter.drawPath(path)
+        
+        painter.restore()
+
     def paint(self, painter, option, widget=None):
         _ = (option, widget)
         if getattr(self.canvas, "show_components", False):
@@ -824,6 +924,10 @@ class PointLoadItem(_Item):
         col = self.ink(S.APPLIED)
         tail = QtCore.QPointF(-ux * self.LEN, -uy * self.LEN)
         tip = QtCore.QPointF(0.0, 0.0)
+
+        if getattr(self, "_rotating", False):
+            self._paint_rotation_guides(painter, ux, uy, tail)
+
         painter.setPen(QtGui.QPen(col, 1.7))
         painter.drawLine(tail, QtCore.QPointF(-ux * self.HEAD, -uy * self.HEAD))
         path = QtGui.QPainterPath()
@@ -831,13 +935,14 @@ class PointLoadItem(_Item):
         painter.setBrush(col)
         painter.setPen(QtCore.Qt.PenStyle.NoPen)
         painter.drawPath(path)
-        if self.isSelected():
-            # The rotate handle: drag it to aim the force, magnitude fixed.
+
+        if self.isSelected() and not getattr(self, "_rotating", False):
             ring = S.SELECT
             painter.setPen(QtGui.QPen(ring, 2.0))
             painter.setBrush(QtGui.QColor(255, 255, 255, 235))
             painter.drawEllipse(tail, self.HANDLE_R, self.HANDLE_R)
-        if self.canvas.label_loads:
+
+        if self.canvas.label_loads and not getattr(self, "_rotating", False):
             painter.setFont(S.font(13.0))
             painter.setPen(QtGui.QPen(col))
             text = fmt(mag, "N")
@@ -895,10 +1000,16 @@ class PointLoadItem(_Item):
             if l is not None and d is not None:
                 _, _, mag = d
                 pos = event.pos()
-                fx, fy = direction_from_handle(pos.x(), pos.y(), mag)
+                modifiers = event.modifiers()
+                fx, fy, deg, is_snapped = direction_from_handle_snapped(
+                    pos.x(), pos.y(), mag, modifiers
+                )
                 l.fx, l.fy = fx, fy
+                self._current_angle = deg
+                self._is_snapped = is_snapped
                 self.canvas.invalidate_result()
                 self.canvas.refresh_geometry()
+                self.update()
             event.accept()
             return
         super().mouseMoveEvent(event)
@@ -908,16 +1019,10 @@ class PointLoadItem(_Item):
             self._rotating = False
             self.canvas.save()
             self.canvas.notify()
+            self.update()
             event.accept()
             return
         super().mouseReleaseEvent(event)
-
-    def hoverMoveEvent(self, event):
-        if self.isSelected() and self._near_handle(event.pos()):
-            self.setCursor(QtCore.Qt.CursorShape.CrossCursor)
-        else:
-            self.unsetCursor()
-        super().hoverMoveEvent(event)
 
     def open_editor(self, _scene_pos):
         l = self.load()
@@ -1698,9 +1803,7 @@ class SingleDiagramOverlay(QtWidgets.QGraphicsItem):
             for i, v in enumerate(values):
                 f = i / max(1, len(values) - 1)
                 off = (v / peak) * 10.0
-                poly.append(
-                    QtCore.QPointF(pa.x() + dx * f + nx * off, pa.y() + dy * f + ny * off)
-                )
+                poly.append(QtCore.QPointF(pa.x() + dx * f + nx * off, pa.y() + dy * f + ny * off))
             poly.append(pb)
             p.addPolygon(QtGui.QPolygonF(poly))
         stroker = QtGui.QPainterPathStroker()
