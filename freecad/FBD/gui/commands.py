@@ -327,7 +327,7 @@ class SyncSketch(_Command):
 
         sketch = sketch_import.find_linked_sketch(editor.model, editor.host.obj.Document)
         if sketch is None:
-            App.Console.PrintWarning("FBD: the linked sketch is gone.\n")
+            App.Console.PrintWarning("FBD: the linked sketch no longer exists.\n")
             return
         editor.push_undo("Sync sketch")
         report = sketch_import.resync(editor.model, sketch)

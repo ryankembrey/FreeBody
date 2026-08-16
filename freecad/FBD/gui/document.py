@@ -92,7 +92,9 @@ class Diagram:
         obj.Data = model.to_dict()
         App.Console.PrintMessage("FBD: " + report.summary() + "\n")
         for orphan in report.kept_orphans:
-            App.Console.PrintWarning(f"FBD: kept {orphan}, it carries a support or a load.\n")
+            App.Console.PrintWarning(
+                f"FBD: retained {orphan}; it carries a support or a load.\n"
+            )
         from .editor_host import refresh_editor
 
         refresh_editor(obj)

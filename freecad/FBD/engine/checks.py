@@ -172,10 +172,14 @@ def check(model: Model) -> Diagnosis:
     d = Diagnosis()
 
     if not model.nodes:
-        d.issues.append(Issue(ERROR, "Nothing drawn yet. Add nodes and members."))
+        d.issues.append(
+            Issue(ERROR, "No geometry present. Add joints and members.")
+        )
         return d
     if not model.members:
-        d.issues.append(Issue(ERROR, "No members. Connect nodes to form a structure."))
+        d.issues.append(
+            Issue(ERROR, "No members present. Connect joints to define a structure.")
+        )
         return d
 
     # Referential integrity first: bad references would crash the adapter.
@@ -208,7 +212,7 @@ def check(model: Model) -> Diagnosis:
         for item in coll.values():
             if item.node is None and item.anchor is None:
                 d.issues.append(
-                    Issue(ERROR, "A load is not attached to anything.", [(kind, item.id)])
+                    Issue(ERROR, "A load is not attached to any entity.", [(kind, item.id)])
                 )
                 return d
             if item.node is not None and item.node not in model.nodes:
@@ -230,7 +234,7 @@ def check(model: Model) -> Diagnosis:
     for mo in model.motors.values():
         if mo.member not in model.members or mo.node not in model.nodes:
             d.issues.append(
-                Issue(ERROR, "A motor refers to something that is gone.", [("motor", mo.id)])
+                Issue(ERROR, "A motor refers to a deleted entity.", [("motor", mo.id)])
             )
             return d
     for ac in model.actuators.values():
@@ -261,9 +265,9 @@ def check(model: Model) -> Diagnosis:
         d.issues.append(
             Issue(
                 WARNING,
-                "This diagram has a motor or an actuator on it, so it is a "
-                "mechanism by design. Use Run Motion; Solve would report it as "
-                "unstable, which is exactly what a mechanism is.",
+                "This diagram includes a motor or actuator and is therefore a "
+                "mechanism by design. Use Run Motion; Solve will report it as "
+                "unstable, which is the expected behaviour for a mechanism.",
             )
         )
 
@@ -271,7 +275,8 @@ def check(model: Model) -> Diagnosis:
         d.issues.append(
             Issue(
                 ERROR,
-                "No supports. Add a pin, roller, fixed or spring support to hold the structure.",
+                "No supports present. Add a pin, roller, fixed, or spring "
+                "support to restrain the structure.",
             )
         )
         if d.classification != DRIVEN:
@@ -323,8 +328,8 @@ def check(model: Model) -> Diagnosis:
             )
         else:
             detail = (
-                "the supports are arranged so they cannot resist every "
-                "movement (parallel or concurrent reactions)"
+                "the supports cannot resist every direction of motion "
+                "(parallel or concurrent reaction lines)"
             )
         plural = "part of the structure" if len(groups) > 1 else "the structure"
         message = f"Mechanism: {plural} around {names} can still move, because {detail}."
@@ -348,7 +353,7 @@ def check(model: Model) -> Diagnosis:
             f"Mechanism: the hinges around {names} release "
             f"{released} more moment connection"
             f"{'s' if released != 1 else ''} than the structure can "
-            "spare. Remove a release, or add a support."
+            "accommodate. Remove a release, or add a support."
         )
         if d.classification == DRIVEN:
             d.issues.append(

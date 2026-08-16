@@ -689,7 +689,7 @@ class DisplayPreferencesPanel(PreferencePanel):
     title = "Display"
     groups = [
         FieldGroup(
-            "On Open",
+            "Initial Display State",
             [
                 BoolField(
                     "ShowSheet",
@@ -727,7 +727,7 @@ class DisplayPreferencesPanel(PreferencePanel):
             ],
         ),
         FieldGroup(
-            "Diagrams on Open",
+            "Initial Diagram Display",
             [
                 BoolField(
                     "ShowMomentDiagram",

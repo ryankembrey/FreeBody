@@ -343,8 +343,8 @@ def solve(model: Model, run_checks: bool = True) -> StaticResult:
         ):
             attempt.ok = False
             attempt.message = (
-                "Every cable or strut went slack: nothing is "
-                "left to carry the load. Check the load "
+                "Every cable or strut went slack: no member "
+                "remains to carry the load. Check the load "
                 "direction."
             )
             break
@@ -364,7 +364,9 @@ def solve(model: Model, run_checks: bool = True) -> StaticResult:
             forces.active = False
     if attempt.ok and inactive:
         names = ", ".join(sorted(model.members[i].label for i in inactive if i in model.members))
-        attempt.message = f"Solved in {passes} passes. Slack and carrying nothing: {names}."
+        attempt.message = (
+            f"Solved in {passes} passes. Slack and carrying no load: {names}."
+        )
     return attempt
 
 
@@ -383,10 +385,10 @@ def _solve_once(model: Model, inactive: Set[int]) -> StaticResult:
         text = str(exc)
         if "stab" in (name + text).lower() or "singular" in (name + text).lower():
             result.message = (
-                "The solver reports an unstable structure. Check "
-                "the supports hold it against sliding and rotating, "
-                "and that the hinges have not freed a joint "
-                "completely."
+                "The solver reports an unstable structure. Verify "
+                "that the supports restrain it against translation "
+                "and rotation, and that the hinges have not fully "
+                "released a joint."
             )
         else:
             result.message = f"Solver failed: {text}"

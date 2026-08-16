@@ -119,8 +119,14 @@ class SyncReport:
         if self.removed_members:
             bits.append(f"{self.removed_members} removed")
         if self.kept_orphans:
-            bits.append(f"{len(self.kept_orphans)} kept because they carry something")
-        return "Sketch synced: " + (", ".join(bits) if bits else "nothing changed") + "."
+            bits.append(
+                f"{len(self.kept_orphans)} retained, each carrying a support or load"
+            )
+        return (
+            "Sketch synchronised: "
+            + (", ".join(bits) if bits else "no changes")
+            + "."
+        )
 
 
 # === reading the sketch
@@ -229,7 +235,7 @@ def import_sketch(model, sketch, link: bool = True) -> Tuple[List, List]:
 
     if skipped:
         _warn(
-            "skipped %s geometry in '%s' (only lines and points import)."
+            "skipped %s geometry in '%s': only lines and points are supported."
             % (", ".join(sorted(skipped)), getattr(sketch, "Label", sketch))
         )
 
@@ -318,7 +324,8 @@ def resync(model, sketch) -> SyncReport:
         return report
     if skipped:
         report.warnings.append(
-            "Skipped " + ", ".join(sorted(skipped)) + ": only lines and points import."
+            "Skipped " + ", ".join(sorted(skipped))
+            + ": only lines and points are supported for import."
         )
 
     link = model.sketch_link

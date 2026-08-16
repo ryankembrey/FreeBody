@@ -151,7 +151,7 @@ class MotorItem(_Item):
         )
         form.add_combo(
             "Motion",
-            [(M.CONTINUOUS, "Continuous"), (M.SWEEP, "Sweep back and forth")],
+            [(M.CONTINUOUS, "Continuous rotation"), (M.SWEEP, "Oscillating sweep")],
             mo.motion,
             lambda v: self.canvas.edit(lambda: setattr(mo, "motion", v), rebuild=True),
             tooltip="Type of motion profile",
@@ -168,7 +168,7 @@ class MotorItem(_Item):
                 tooltip="Either side of the starting angle.",
             )
         form.add_spin(
-            "Starts at",
+            "Start time",
             mo.schedule.start,
             lambda v: self.canvas.edit(lambda: setattr(mo.schedule, "start", max(0.0, v))),
             lo=0.0,
@@ -177,7 +177,7 @@ class MotorItem(_Item):
             tooltip="Seconds into the run before this motor starts turning.",
         )
         form.add_spin(
-            "Runs for",
+            "Duration",
             mo.schedule.duration if mo.schedule.duration is not None else 0.0,
             lambda v: self.canvas.edit(
                 lambda: setattr(mo.schedule, "duration", v if v > 0 else None)
@@ -351,9 +351,9 @@ class ActuatorItem(_Item):
         form.add_combo(
             "Motion",
             [
-                (M.CYCLE, "Out and back, repeating"),
-                (M.EXTEND, "Out once, then hold"),
-                (M.SINE, "Smooth (sine)"),
+                (M.CYCLE, "Reciprocating, constant velocity"),
+                (M.EXTEND, "Single stroke, then hold"),
+                (M.SINE, "Harmonic"),
             ],
             ac.motion,
             lambda v: self.canvas.edit(lambda: setattr(ac, "motion", v)),
@@ -372,7 +372,7 @@ class ActuatorItem(_Item):
             "fully extended end, which contracts in by the stroke.",
         )
         form.add_spin(
-            "Starts at",
+            "Start time",
             ac.schedule.start,
             lambda v: self.canvas.edit(lambda: setattr(ac.schedule, "start", max(0.0, v))),
             lo=0.0,
@@ -381,7 +381,7 @@ class ActuatorItem(_Item):
             tooltip="Seconds into the run before this ram starts moving.",
         )
         form.add_spin(
-            "Runs for",
+            "Duration",
             ac.schedule.duration if ac.schedule.duration is not None else 0.0,
             lambda v: self.canvas.edit(
                 lambda: setattr(ac.schedule, "duration", v if v > 0 else None)
@@ -1009,7 +1009,7 @@ class EffortGraphOverlay(QtWidgets.QGraphicsItem):
         painter.drawText(
             QtCore.QRectF(pad, 2.0 * k, w, title_h),
             int(QtCore.Qt.AlignmentFlag.AlignVCenter | QtCore.Qt.AlignmentFlag.AlignLeft),
-            "Effort through the stroke",
+            "Driver Effort vs. Travel",
         )
 
         # One shared scale per unit, so two rams are directly comparable and a
@@ -1566,7 +1566,7 @@ class _DriverTool(Tool):
 
 class MotorTool(_DriverTool):
     name = "Motor"
-    prompt = "Click a link to drive it. It turns about its pinned end."
+    prompt = "Select a link to drive. It rotates about its pinned joint."
     wants_member = True
     preview_kind = "motor"
 
@@ -1596,7 +1596,7 @@ class MotorTool(_DriverTool):
         )
         self.canvas.preview_driver = None
         self.canvas.select_entity("motor", motor.id)
-        self.canvas.set_prompt(f"{member.label} is driven. Press Run Motion to watch it.")
+        self.canvas.set_prompt(f"{member.label} is now driven. Press Run Motion to simulate.")
         return True
 
     def _nearest_end(self, scene_pos, member):
@@ -1613,7 +1613,7 @@ class MotorTool(_DriverTool):
 
 class ActuatorTool(_DriverTool):
     name = "Actuator"
-    prompt = "Click a member to turn it into a linear actuator."
+    prompt = "Select a member to convert into a linear actuator."
     wants_member = True
     preview_kind = "actuator"
 
@@ -1636,7 +1636,7 @@ class ActuatorTool(_DriverTool):
         )
         self.canvas.preview_driver = None
         self.canvas.select_entity("actuator", actuator.id)
-        self.canvas.set_prompt("Actuator added. Run Motion to see the force it needs.")
+        self.canvas.set_prompt("Actuator added. Run Motion to compute the required force.")
         return True
 
 
@@ -1862,7 +1862,9 @@ class MotionController:
         peaks = result.peak_effort()
         for mo in self.model.motors.values():
             if mo.id in peaks:
-                rows.append((f"Torque {mo.label}", fmt(peaks[mo.id], "N.mm"), "peak over the run"))
+                rows.append(
+                    (f"Torque {mo.label}", fmt(peaks[mo.id], "N.mm"), "peak over the simulation")
+                )
         for ac in self.model.actuators.values():
             if ac.id in peaks:
                 value = peaks[ac.id]
@@ -1888,7 +1890,7 @@ class MotionController:
                     (
                         f"Reaction {self.model.entity_label(support.holds)}",
                         fmt(mag, "N"),
-                        "peak over the run",
+                        "peak over the simulation",
                     )
                 )
 

@@ -848,13 +848,13 @@ def _q_from_frame(system: "MechanismSystem", frame: Frame) -> np.ndarray:
 def check_mechanism(model: Model) -> Tuple[bool, str, int]:
     """(runnable, message, mobility). Never raises."""
     if not model.members:
-        return False, "No links. Draw members to make a mechanism.", 0
+        return False, "No links present. Draw members to define a mechanism.", 0
     if not model.has_drivers():
         return (
             False,
             (
-                "Nothing drives this yet. Add a motor to a link, or "
-                "turn a member into a linear actuator."
+                "No driver is present. Add a motor to a link, or "
+                "convert a member into a linear actuator."
             ),
             0,
         )
@@ -875,13 +875,13 @@ def check_mechanism(model: Model) -> Tuple[bool, str, int]:
         return (
             True,
             (
-                f"Over-constrained by {-mobility}. It will still run if "
-                "the extra links are consistent, but check for a "
-                "duplicated link or a joint grounded twice."
+                f"Over-constrained by {-mobility}. The mechanism remains "
+                "solvable if the redundant constraints are consistent; "
+                "check for a duplicated link or a joint grounded twice."
             ),
             mobility,
         )
-    return True, "Ready to run.", mobility
+    return True, "Ready to simulate.", mobility
 
 
 def _limit_message(model: Model, system: MechanismSystem, t: float) -> str:
@@ -900,17 +900,18 @@ def _limit_message(model: Model, system: MechanismSystem, t: float) -> str:
         member = model.members.get(ac.member)
         name = member.label if member else (ac.label or "the ram")
         return (
-            f"{name} runs out of travel at about {reached:,.0f} mm of its "
-            f"{abs(ac.stroke):,.0f} mm stroke: it lines up with the link it "
-            "drives, which is as far as that joint can be pushed. Shorten "
-            "the stroke, or move the ram's anchor."
+            f"{name} reaches its travel limit at approximately "
+            f"{reached:,.0f} mm of its {abs(ac.stroke):,.0f} mm stroke, "
+            "where it becomes collinear with the link it drives; this is "
+            "the maximum displacement attainable at that joint. Reduce "
+            "the stroke, or relocate the actuator's anchor."
         )
     for mo in model.motors.values():
         if mo.id in angles:
             return (
                 f"{mo.label or 'The motor'} cannot carry the linkage past "
-                "this position: the link lengths will not close. Check them, "
-                "or reduce the sweep."
+                "this position: the link lengths will not close. Verify "
+                "them, or reduce the sweep."
             )
     return "A driver asked for a position the linkage cannot reach."
 
@@ -1031,13 +1032,13 @@ def simulate(
         if not recovered and stalled > steps // 2:
             result.ok = len(frames) > 1
             result.message = (
-                f"Stops dead at {limit_t:.2f} s and never comes back. "
+                f"Motion halts at {limit_t:.2f} s and does not recover. "
                 + _limit_message(model, system, limit_t)
             )
             return result
 
     if not frames:
-        result.message = "Nothing to run."
+        result.message = "No mechanism to simulate."
         return result
 
     if any(m.mass > 0 for m in model.members.values()):
@@ -1097,7 +1098,7 @@ def solve_for_target(model: Model, actuator_id: int, target_fn, samples: int = 2
     driven_ids = {row["actuator"] for row in system.rows
                  if row["kind"] == _LENGTH and row["actuator"] is not None}
     if base is None or actuator_id not in driven_ids:
-        return None, False, "This actuator isn't driving anything in the mechanism."
+        return None, False, "This actuator is not driving any element of the mechanism."
 
     def evaluate(length, q_guess):
         q, _err, ok = system.solve_position(q_guess, 0.0, {actuator_id: length})
@@ -1125,9 +1126,9 @@ def solve_for_target(model: Model, actuator_id: int, target_fn, samples: int = 2
 
     if hi is None:
         return None, False, (
-            "No stroke within a plausible travel range reaches that target. "
-            "Check the target is actually reachable, and that this ram is "
-            "on the member you expect."
+            "No stroke within a plausible travel range attains the target. "
+            "Confirm that the target is reachable, and that the actuator "
+            "is assigned to the intended member."
         )
 
     q_guess = system.q0.copy()
@@ -1245,7 +1246,7 @@ def lever_report(model: Model, pivot_node: int) -> dict:
         # so they follow from t and no search is needed.
         member = model.members.get(anchor.member)
         if member is None:
-            out["message"] = "The pivot has lost its bar."
+            out["message"] = "The pivot's host member no longer exists."
             return out
         length = model.member_length(member)
         a_len, b_len = anchor.t * length, (1.0 - anchor.t) * length

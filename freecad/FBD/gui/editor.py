@@ -1825,7 +1825,7 @@ class Editor(QtWidgets.QWidget, MotionController):
                         (
                             f"Moved {self.model.entity_label(nid)}",
                             I.fmt(dist, "mm"),
-                            "from its drawn position",
+                            "relative to the drawn position",
                         )
                     )
             for mid in sorted(self.model.members):
@@ -1846,7 +1846,7 @@ class Editor(QtWidgets.QWidget, MotionController):
                         (
                             f"Rotated {member.label}",
                             I.fmt(delta, "deg"),
-                            "from its drawn angle",
+                            "relative to the drawn angle",
                         )
                     )
         return rows

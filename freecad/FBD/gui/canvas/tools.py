@@ -61,8 +61,8 @@ class SelectTool(Tool):
     name = "Select"
     prompt = (
         "Click to select. Drag a joint, a member, or the edge of a "
-        "structure's box to move the whole thing; its corner resizes it. "
-        "A structure's shape always matches its sketch."
+        "structure's bounding box to translate it; its corner resizes "
+        "it. A structure's geometry always matches its source sketch."
     )
     snaps_to_grid = False
 
@@ -151,7 +151,7 @@ class AnchorTool(Tool):
 
 class PivotTool(Tool):
     name = "Pivot"
-    prompt = "Click a member to pivot it there. One click makes it a lever."
+    prompt = "Click a member to place a pivot on it, converting it into a lever."
     wants_member = True
     snaps_to_grid = False
 
@@ -171,9 +171,9 @@ class PivotTool(Tool):
         if info:
             self.canvas.select_entity("support", info["support"])
             self.canvas.set_prompt(
-                "Pivot placed. Drag it along the bar to change the "
-                "mechanical advantage; the two sides stay in line because "
-                "they are one bar."
+                "Pivot placed. Drag it along the bar to adjust the "
+                "mechanical advantage; both arms remain collinear because "
+                "they belong to a single member."
             )
         return True
 
