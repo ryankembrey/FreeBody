@@ -1288,7 +1288,12 @@ class Editor(QtWidgets.QWidget, MotionController):
         menu = QtWidgets.QMenu(self)
 
         def add_action(parent, text, callback, icon_name=None, checkable=False, checked=False):
-            act = parent.addAction(text)
+
+
+            display_text = f"✓  {text}" if (checkable and checked) else (f"    {text}" if checkable else text)
+
+
+            act = parent.addAction(display_text)
             if icon_name:
                 act.setIcon(QtGui.QIcon(icon_path(icon_name)))
             if checkable:
