@@ -1342,7 +1342,7 @@ class Editor(QtWidgets.QWidget, MotionController):
                 sw_menu = menu.addMenu("Change Type")
                 for k in M.SUPPORT_KINDS:
                     icon = f"tool_{k if k in ('pin', 'fixed', 'spring') else 'roller'}.svg"
-                    add_action(sw_menu, M.SUPPORT_LABELS[k], lambda k_=k: clicked_item._set_kind(sup, k_), icon, checkable=True, checked=(sup.kind==k))
+                    add_action(sw_menu, M.SUPPORT_LABELS[k], lambda *_, k_=k: clicked_item._set_kind(sup, k_), icon, checkable=True, checked=(sup.kind==k))
             menu.addSeparator()
             add_action(menu, "Delete Support", self.delete_selection)
             
