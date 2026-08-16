@@ -35,7 +35,7 @@ SUPPORT = QtGui.QColor("#37474f")      # supports and ground hatching
 SPRING_COL = QtGui.QColor("#6a4bab")
 
 SELECT = QtGui.QColor("#0a84ff")
-HOVER = QtGui.QColor("#4da3ff")
+HOVER = QtGui.QColor("#34c759")  # green: kept clearly apart from SELECT's blue
 PREVIEW = QtGui.QColor("#8a94a6")
 SNAP = QtGui.QColor("#ff8f00")
 

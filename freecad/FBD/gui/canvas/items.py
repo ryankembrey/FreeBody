@@ -1862,10 +1862,10 @@ class SingleDiagramOverlay(QtWidgets.QGraphicsItem):
 
         painter.restore()
 
-        # Hover Box Indicator (Dashed Blue Box)
+        # Hover Box Indicator (Dashed Green Box)
         if self._hover and not is_overlay:
             painter.save()
-            hover_pen = QtGui.QPen(S.SELECT, 1.0, QtCore.Qt.PenStyle.DashLine)
+            hover_pen = QtGui.QPen(S.HOVER, 1.0, QtCore.Qt.PenStyle.DashLine)
             hover_pen.setCosmetic(True)
             painter.setPen(hover_pen)
             painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)

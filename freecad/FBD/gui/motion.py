@@ -576,6 +576,26 @@ class MotionOverlay(QtWidgets.QGraphicsItem):
             return True
         return False
 
+    def shape(self):
+        """Only the play button and the scrubber are ever actually
+        interactive -- the rest of this item's bounding box exists only
+        to size the running-pose drawing, and it sits on top of (and at
+        a higher z-value than) every ordinary node, member, support and
+        load. Without a real shape here, Qt's own hit-testing -- hover
+        included -- would treat the *whole* structure as covered by
+        this item, and nothing underneath would ever see a hover or a
+        click that should have fallen through to it instead.
+        """
+        rects = self._ui_rects()
+        if not rects:
+            return QtGui.QPainterPath()
+        _, play_rect, timeline_rect = rects
+        k = self.canvas.px(1.0)
+        path = QtGui.QPainterPath()
+        path.addEllipse(play_rect.adjusted(-12.0 * k, -12.0 * k, 12.0 * k, 12.0 * k))
+        path.addRect(timeline_rect.adjusted(-12.0 * k, -18.0 * k, 12.0 * k, 18.0 * k))
+        return path
+
     def paint(self, painter, option, widget=None):
         _ = (option, widget)
         result = getattr(self.canvas, "motion_result", None)

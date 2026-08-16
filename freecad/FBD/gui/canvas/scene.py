@@ -151,8 +151,10 @@ class View(QtWidgets.QGraphicsView):
 
         is_mmb = (button == QtCore.Qt.MouseButton.MiddleButton)
         is_rmb = (button == QtCore.Qt.MouseButton.RightButton)
+        # Left-drag-to-pan is Shift-only now: Ctrl+click is multi-select,
+        # the same as everywhere else, and the two can't share a button.
         is_lmb_pan = (button == QtCore.Qt.MouseButton.LeftButton and 
-                      bool(modifiers & (QtCore.Qt.KeyboardModifier.ShiftModifier | QtCore.Qt.KeyboardModifier.ControlModifier)))
+                      bool(modifiers & QtCore.Qt.KeyboardModifier.ShiftModifier))
 
         if is_mmb or is_lmb_pan:
             self._shift_panning = False
@@ -262,21 +264,37 @@ class View(QtWidgets.QGraphicsView):
         super().mouseDoubleClickEvent(event)
 
     def contextMenuEvent(self, event):
-        scene_pos = self.mapToScene(event.pos())
-        items = self.scene().items(scene_pos)
-        clicked_item = None
+        # Map from global screen coordinates to viewport coordinates to avoid any 
+        # offset from the view's frame or scrollbars.
+        viewport_pos = self.viewport().mapFromGlobal(event.globalPos())
+        scene_pos = self.mapToScene(viewport_pos)
         
-        for item in items:
-            if hasattr(item, "kind") and getattr(item, "kind", None):
-                clicked_item = item
-                break
-            elif type(item).__name__ in ("ResultsTableOverlay", "EffortGraphOverlay", "SingleDiagramOverlay"):
-                clicked_item = item
-                break
+        # Use the exact same proximity hit-testing that left-click and double-click use.
+        clicked_item = self.canvas.item_at(scene_pos)
+        
+        if not clicked_item:
+            # Fallback exact-shape search for overlays (Results Table, Diagrams, etc.)
+            tol = 8
+            scene_rect = self.mapToScene(
+                QtCore.QRect(viewport_pos.x() - tol, viewport_pos.y() - tol, tol * 2, tol * 2)
+            ).boundingRect()
+            items = self.scene().items(
+                scene_rect,
+                QtCore.Qt.ItemSelectionMode.IntersectsItemShape,
+                QtCore.Qt.SortOrder.DescendingOrder,
+            )
+            for item in items:
+                if type(item).__name__ in ("ResultsTableOverlay", "EffortGraphOverlay", "SingleDiagramOverlay"):
+                    clicked_item = item
+                    break
 
-        # Select the item if it isn't already selected (leaving empty canvas clicks alone)
+        # Right-click only ever changes the selection when nothing was
+        # selected yet. An existing multi-selection -- built up with
+        # Ctrl+click specifically to act on as a group -- must survive a
+        # right-click elsewhere untouched, or "Delete Selection" from the
+        # menu that follows would silently delete the wrong thing.
         if clicked_item and hasattr(clicked_item, "setSelected"):
-            if not clicked_item.isSelected():
+            if not self.scene().selectedItems():
                 clicked_item.setSelected(True)
 
         if hasattr(self.canvas, "show_context_menu"):

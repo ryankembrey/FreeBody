@@ -25,6 +25,7 @@ from .canvas.tools import build_tools
 from ..engine import model as M
 from ..engine import checks, statics
 from .motion import MotionController, MotorItem, ActuatorItem
+from .engine_bridge import edit as bridge_edit
 
 
 DIAGRAM_MODES = [
@@ -1332,22 +1333,29 @@ class Editor(QtWidgets.QWidget, MotionController):
 
         kind = clicked_item.kind if clicked_item and hasattr(clicked_item, "kind") else None
         ident = clicked_item.ident if clicked_item and hasattr(clicked_item, "ident") else None
+        selected_count = sum(1 for item in self._items.values() if item.isSelected())
 
         # --- 1. Object-specific Context Actions ---
-        if kind == "node":
+        # A multi-selection first: nothing single-item-specific (Edit,
+        # Add Support, Add Load...) makes sense across a mixed set of
+        # nodes/members/loads, so it gets one group action instead of
+        # whichever single item happened to be under the cursor.
+        if selected_count > 1:
+            add_action(menu, f"Delete Selection ({selected_count})", self.delete_selection)
+        elif kind == "node":
             add_action(menu, "Edit Joint...", lambda: clicked_item.open_editor(clicked_item.anchor_point()), "tool_node.svg")
             
             sup_menu = menu.addMenu("Add Support")
             sup_menu.setIcon(QtGui.QIcon(icon_path("tool_pin.svg")))
-            add_action(sup_menu, "Pin", lambda: self.edit(lambda m: m.add_support(ident, M.PIN)), "tool_pin.svg")
-            add_action(sup_menu, "Roller", lambda: self.edit(lambda m: m.add_support(ident, M.ROLLER_X)), "tool_roller.svg")
-            add_action(sup_menu, "Fixed", lambda: self.edit(lambda m: m.add_support(ident, M.FIXED)), "tool_fixed.svg")
-            add_action(sup_menu, "Spring", lambda: self.edit(lambda m: m.add_support(ident, M.SPRING, ky=1000.0)), "tool_spring.svg")
+            add_action(sup_menu, "Pin", lambda: bridge_edit(self, "Add pin support", lambda m: m.add_support(ident, M.PIN)), "tool_pin.svg")
+            add_action(sup_menu, "Roller", lambda: bridge_edit(self, "Add roller support", lambda m: m.add_support(ident, M.ROLLER_X)), "tool_roller.svg")
+            add_action(sup_menu, "Fixed", lambda: bridge_edit(self, "Add fixed support", lambda m: m.add_support(ident, M.FIXED)), "tool_fixed.svg")
+            add_action(sup_menu, "Spring", lambda: bridge_edit(self, "Add spring support", lambda m: m.add_support(ident, M.SPRING, ky=1000.0)), "tool_spring.svg")
             
             load_menu = menu.addMenu("Add Load")
             load_menu.setIcon(QtGui.QIcon(icon_path("tool_force.svg")))
-            add_action(load_menu, "Force", lambda: self.edit(lambda m: m.add_point_load(node=ident, fx=0.0, fy=-self.default_force)), "tool_force.svg")
-            add_action(load_menu, "Moment", lambda: self.edit(lambda m: m.add_moment_load(node=ident, m=self.default_moment)), "tool_moment.svg")
+            add_action(load_menu, "Force", lambda: bridge_edit(self, "Add force", lambda m: m.add_point_load(node=ident, fx=0.0, fy=-self.default_force)), "tool_force.svg")
+            add_action(load_menu, "Moment", lambda: bridge_edit(self, "Add moment", lambda m: m.add_moment_load(node=ident, m=self.default_moment)), "tool_moment.svg")
             
             menu.addSeparator()
             add_action(menu, "Delete Joint", self.delete_selection)
@@ -1356,8 +1364,8 @@ class Editor(QtWidgets.QWidget, MotionController):
             add_action(menu, "Edit Member...", lambda: clicked_item.open_editor(clicked_item.boundingRect().center()), "tool_member.svg")
             add_action(menu, "Isolate Member (FBD)", lambda: self.isolate_member(ident), "fbd_new.svg")
             menu.addSeparator()
-            add_action(menu, "Add Point Load (Midspan)", lambda: self.edit(lambda m: m.add_point_load(anchor=m.add_anchor(ident, 0.5).id, fx=0.0, fy=-self.default_force)), "tool_force.svg")
-            add_action(menu, "Add Line Load", lambda: self.edit(lambda m: m.add_line_load(ident, -self.default_line_load, "y")), "tool_lineload.svg")
+            add_action(menu, "Add Point Load (Midspan)", lambda: bridge_edit(self, "Add point load", lambda m: m.add_point_load(anchor=m.add_anchor(ident, 0.5).id, fx=0.0, fy=-self.default_force)), "tool_force.svg")
+            add_action(menu, "Add Line Load", lambda: bridge_edit(self, "Add line load", lambda m: m.add_line_load(ident, -self.default_line_load, "y")), "tool_lineload.svg")
             menu.addSeparator()
             add_action(menu, "Delete Member", self.delete_selection)
 
@@ -1399,7 +1407,9 @@ class Editor(QtWidgets.QWidget, MotionController):
             add_action(menu, f"Hide {text} Diagram", getattr(self, f"toggle_{k}"), f"tool_diagram_{k}.svg")
 
         # --- 2. Global Actions (Always available) ---
-        if kind is not None or type(clicked_item).__name__ in ("ResultsTableOverlay", "EffortGraphOverlay", "SingleDiagramOverlay"):
+        if selected_count > 1 or kind is not None or type(clicked_item).__name__ in (
+            "ResultsTableOverlay", "EffortGraphOverlay", "SingleDiagramOverlay"
+        ):
             menu.addSeparator()
 
         add_action(menu, "Fit View", self.fit, "tool_fit.svg")
