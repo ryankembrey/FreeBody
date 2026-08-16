@@ -599,15 +599,26 @@ class SupportItem(_Item):
         _hatch(painter, a, b, size * 0.4)
 
     def _fixed(self, painter, size):
-        a, b = QtCore.QPointF(-size, 0), QtCore.QPointF(size, 0)
-        painter.setPen(QtGui.QPen(painter.pen().color(), 2.0))
+        # Vertical stem connecting joint (0, 0) to ground plate at y = size
+        stem_pen = QtGui.QPen(painter.pen().color(), 3.0)
+        stem_pen.setCapStyle(QtCore.Qt.PenCapStyle.SquareCap)
+        painter.setPen(stem_pen)
+        painter.drawLine(QtCore.QPointF(0, 0), QtCore.QPointF(0, size))
+        
+        # Ground base plate at y = size (30px below joint, matching Pin/Roller)
+        a, b = QtCore.QPointF(-size * 0.85, size), QtCore.QPointF(size * 0.85, size)
+        plate_pen = QtGui.QPen(painter.pen().color(), 2.2)
+        painter.setPen(plate_pen)
         painter.drawLine(a, b)
-        painter.setPen(QtGui.QPen(painter.pen().color(), 1.3))
-        _hatch(painter, a, b, size * 0.45, count=9)
+        
+        # Ground hatching
+        hatch_pen = QtGui.QPen(painter.pen().color(), 1.3)
+        painter.setPen(hatch_pen)
+        _hatch(painter, a, b, size * 0.4, count=8)
 
     def _spring(self, painter, size):
         coils, width = 4, size * 0.4
-        bottom = size * 1.3
+        bottom = size
         seg = bottom / (coils * 2 + 2)
         path = QtGui.QPainterPath(QtCore.QPointF(0, 0))
         y = seg
@@ -618,8 +629,8 @@ class SupportItem(_Item):
         path.lineTo(QtCore.QPointF(0, bottom - seg))
         path.lineTo(QtCore.QPointF(0, bottom))
         painter.drawPath(path)
-        a = QtCore.QPointF(-size * 0.95, bottom)
-        b = QtCore.QPointF(size * 0.95, bottom)
+        a = QtCore.QPointF(-size * 0.85, bottom)
+        b = QtCore.QPointF(size * 0.85, bottom)
         painter.drawLine(a, b)
         _hatch(painter, a, b, size * 0.4)
 

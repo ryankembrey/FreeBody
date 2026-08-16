@@ -18,21 +18,21 @@ from PySide6 import QtGui, QtCore
 
 # ---- colour ---------------------------------------------------------------
 
-INK = QtGui.QColor("#1d2025")          # members, primary linework
-INK_LIGHT = QtGui.QColor("#5b6270")    # secondary linework, dimensions
+INK = QtGui.QColor("#1d2025")  # members, primary linework
+INK_LIGHT = QtGui.QColor("#5b6270")  # secondary linework, dimensions
 PAPER = QtGui.QColor("#ffffff")
-DESK = QtGui.QColor("#e9ebef")         # around the sheet
+DESK = QtGui.QColor("#e9ebef")  # around the sheet
 SHEET_EDGE = QtGui.QColor("#c3c8d2")
 SHEET_SHADOW = QtGui.QColor(0, 0, 0, 28)
 
 GRID = QtGui.QColor("#eef0f4")
 GRID_MAJOR = QtGui.QColor("#dfe3ea")
 
-APPLIED = QtGui.QColor("#c62828")      # applied loads
-REACTION = QtGui.QColor("#1565c0")     # solved reactions
-INTERNAL = QtGui.QColor("#2e7d32")     # internal / axial annotation
-SUPPORT = QtGui.QColor("#37474f")      # supports and ground hatching
-SPRING_COL = QtGui.QColor("#6a4bab")
+APPLIED = QtGui.QColor("#c62828")  # applied loads
+REACTION = QtGui.QColor("#1565c0")  # solved reactions
+INTERNAL = QtGui.QColor("#2e7d32")  # internal / axial annotation
+SUPPORT = QtGui.QColor("#37474f")  # supports and ground hatching
+SPRING_COL = SUPPORT
 
 SELECT = QtGui.QColor("#0a84ff")
 HOVER = QtGui.QColor("#34c759")  # green: kept clearly apart from SELECT's blue
@@ -49,19 +49,20 @@ AXIAL_FILL = QtGui.QColor(198, 40, 40, 46)
 MEMBER_W = 0.9
 THIN_W = 0.35
 NODE_R = 1.1
-SUPPORT_SIZE = 5.0
-ARROW_LEN = 16.0            # nominal load arrow length
+SUPPORT_SIZE = 2.5
+ARROW_LEN = 10.0  # nominal load arrow length
 ARROW_HEAD = 3.4
 ARROW_MIN = 6.0
 MOMENT_R = 5.5
 HATCH_COUNT = 7
 LABEL_GAP = 1.6
 
-SNAP_PIXELS = 10.0          # snapping tolerance, in screen pixels
+SNAP_PIXELS = 10.0  # snapping tolerance, in screen pixels
 HANDLE_PIXELS = 9.0
 
 
 # ---- text -----------------------------------------------------------------
+
 
 def font(size_pt=7.5, bold=False):
     f = QtGui.QFont("DejaVu Sans")
@@ -72,8 +73,9 @@ def font(size_pt=7.5, bold=False):
     return f
 
 
-def pen(color, width_mm=MEMBER_W, style=QtCore.Qt.PenStyle.SolidLine,
-        cap=QtCore.Qt.PenCapStyle.RoundCap):
+def pen(
+    color, width_mm=MEMBER_W, style=QtCore.Qt.PenStyle.SolidLine, cap=QtCore.Qt.PenCapStyle.RoundCap
+):
     p = QtGui.QPen(color, width_mm)
     p.setStyle(style)
     p.setCapStyle(cap)
