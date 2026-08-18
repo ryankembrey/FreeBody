@@ -136,6 +136,8 @@ class TreeSelectionObserver:
             return "support", int(name.split("_")[1])
         elif name.startswith("Force_"):
             return "point_load", int(name.split("_")[1])
+        elif name.startswith("LineLoad_"):
+            return "line_load", int(name.split("_")[1])
         elif name.startswith("Motor_"):
             return "motor", int(name.split("_")[1])
         elif name.startswith("Actuator_"):
@@ -772,7 +774,7 @@ class Editor(QtWidgets.QWidget, MotionController):
 
         # 5. Check loads
         for (kind, _ident), item in self._items.items():
-            if kind in ("point_load", "moment_load"):
+            if kind in ("point_load", "moment_load", "line_load"):
                 try:
                     if item.contains(item.mapFromScene(scene_pos)):
                         return item
@@ -833,6 +835,16 @@ class Editor(QtWidgets.QWidget, MotionController):
                 return True
             if key == QtCore.Qt.Key.Key_Y or (key == QtCore.Qt.Key.Key_Z and shift):
                 self.redo()
+                return True
+            if key == QtCore.Qt.Key.Key_A:
+                self._suspend_selection = True
+                try:
+                    for item in self._items.values():
+                        item.setSelected(True)
+                finally:
+                    self._suspend_selection = False
+                self.refresh_geometry()
+                self.notify()
                 return True
         if key in (QtCore.Qt.Key.Key_Delete, QtCore.Qt.Key.Key_Backspace):
             self.delete_selection()
@@ -1897,6 +1909,7 @@ class Editor(QtWidgets.QWidget, MotionController):
                 "member": "Member",
                 "support": "Support",
                 "point_load": "Force",
+                "line_load": "LineLoad",
                 "motor": "Motor",
                 "actuator": "Actuator",
             }

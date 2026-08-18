@@ -364,7 +364,18 @@ class MemberItem(_Item):
         if a == b:
             return
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
-        pen = QtGui.QPen(self.ink(S.INK), 3.4)
+        # Colour by axial force sign when results are present.
+        base_col = S.INK
+        res = getattr(self.canvas, 'display_result', None)
+        if res and res.ok:
+            forces = res.members.get(self.ident)
+            if forces is not None and forces.active and forces.axial:
+                axial = forces.axial_max
+                if axial > 1e-3:
+                    base_col = S.INTERNAL   # tension: green
+                elif axial < -1e-3:
+                    base_col = S.APPLIED    # compression: red
+        pen = QtGui.QPen(self.ink(base_col), 3.4)
         pen.setCosmetic(True)  # constant thickness at any zoom
         pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
         painter.setPen(pen)

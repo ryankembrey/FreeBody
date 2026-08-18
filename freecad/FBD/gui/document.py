@@ -667,6 +667,13 @@ def _sync_structure_children(struct_obj, model: Model, comp_nodes):
             child.Label = f"Moment {ml.m:,.0f} N.mm"
             active_children.append(child)
 
+    for ll in sorted(model.line_loads.values(), key=lambda x: x.id):
+        if ll.member in member_ids_in_comp:
+            obj_name = f"LineLoad_{ll.id}"
+            child = get_child(obj_name, "tool_lineload.svg")
+            child.Label = f"Line load {ll.q:,.3f} N/mm"
+            active_children.append(child)
+
     orphaned_children = set(existing_children.values()) - set(active_children)
     for orphan in orphaned_children:
         try:
@@ -695,6 +702,7 @@ def _parse_entity(name):
     """A tree object's name back to the model entity it stands for."""
     prefixes = {"Node": "node", "Member": "member", "Support": "support",
                 "Force": "point_load", "Moment": "moment_load",
+                "LineLoad": "line_load",
                 "Anchor": "anchor", "Motor": "motor", "Actuator": "actuator"}
     head, _, tail = name.partition("_")
     if head in prefixes and tail.isdigit():
