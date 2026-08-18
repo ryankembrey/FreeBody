@@ -364,17 +364,32 @@ class MemberItem(_Item):
         if a == b:
             return
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
-        # Colour by axial force sign when results are present.
+        # Colour by utilisation gradient when a section is assigned;
+        # otherwise by axial force sign (tension green, compression red).
         base_col = S.INK
         res = getattr(self.canvas, 'display_result', None)
         if res and res.ok:
             forces = res.members.get(self.ident)
-            if forces is not None and forces.active and forces.axial:
-                axial = forces.axial_max
-                if axial > 1e-3:
-                    base_col = S.INTERNAL   # tension: green
-                elif axial < -1e-3:
-                    base_col = S.APPLIED    # compression: red
+            if forces is not None and forces.active:
+                member = self.model.members.get(self.ident)
+                sn = getattr(member, 'section_name', '') if member else ''
+                if sn:
+                    from ...engine.sections import utilisation as _util_fn
+                    N = forces.axial_max if forces.axial else 0.0
+                    M = forces.moment_max if forces.moment else 0.0
+                    mat = getattr(member, 'material', 'Steel S275')
+                    u = _util_fn(sn, mat, N, M)
+                    if u is not None:
+                        u = max(0.0, u)
+                        hue = max(0, int(120 * (1.0 - min(u, 1.0))))
+                        sat = 160 + int(80 * min(u, 1.0))
+                        base_col = QtGui.QColor.fromHsv(hue, sat, 180)
+                elif forces.axial:
+                    axial = forces.axial_max
+                    if axial > 1e-3:
+                        base_col = S.INTERNAL   # tension: green
+                    elif axial < -1e-3:
+                        base_col = S.APPLIED    # compression: red
         pen = QtGui.QPen(self.ink(base_col), 3.4)
         pen.setCosmetic(True)  # constant thickness at any zoom
         pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
@@ -451,24 +466,89 @@ class MemberItem(_Item):
             tooltip="Name of the member"
         )
         form.add_readonly("Length", f"{model.member_length(member):,.1f} mm", tooltip="Length of the member")
-        form.add_section("Stiffness")
-        form.add_spin(
+        form.add_section("Section")
+        from ...engine.sections import SECTIONS, MATERIALS, section_ea_ei, section_self_weight
+
+        def _on_section(name):
+            def _apply():
+                member.section_name = name
+                if name and name in SECTIONS:
+                    mat = getattr(member, "material", "Steel S275")
+                    ea, ei = section_ea_ei(name, mat)
+                    if ea:
+                        member.EA = ea
+                        member.EI = ei
+                        ea_box.blockSignals(True)
+                        ea_box.setValue(ea)
+                        ea_box.blockSignals(False)
+                        ei_box.blockSignals(True)
+                        ei_box.setValue(ei)
+                        ei_box.blockSignals(False)
+            self.canvas.edit(_apply)
+
+        def _on_material(mat):
+            def _apply():
+                member.material = mat
+                sn = getattr(member, "section_name", "")
+                if sn and sn in SECTIONS:
+                    ea, ei = section_ea_ei(sn, mat)
+                    if ea:
+                        member.EA = ea
+                        member.EI = ei
+                        ea_box.blockSignals(True)
+                        ea_box.setValue(ea)
+                        ea_box.blockSignals(False)
+                        ei_box.blockSignals(True)
+                        ei_box.setValue(ei)
+                        ei_box.blockSignals(False)
+            self.canvas.edit(_apply)
+
+        def _set_sw():
+            sn = getattr(member, "section_name", "")
+            mat = getattr(member, "material", "Steel S275")
+            sw = section_self_weight(sn, mat)
+            if sw > 0.0:
+                self.canvas.edit(lambda: setattr(member, "g", sw))
+                self.canvas.set_prompt(f"Self-weight set to {sw:.5f} N/mm")
+            else:
+                self.canvas.set_prompt("Assign a named section first.")
+
+        form.add_combo(
+            "Section",
+            [("", "Custom")] + [(n, n) for n in SECTIONS],
+            getattr(member, "section_name", ""),
+            _on_section,
+            tooltip="Standard section: fills EA and EI automatically. Choose Custom to enter values by hand.",
+        )
+        form.add_combo(
+            "Material",
+            [(n, n) for n in MATERIALS],
+            getattr(member, "material", "Steel S275"),
+            _on_material,
+            tooltip="Material for self-weight calculation and utilisation colour.",
+        )
+        ea_box = form.add_spin(
             "EA",
             member.EA,
             lambda v: self.canvas.edit(lambda: setattr(member, "EA", v)),
             lo=1.0,
             decimals=0,
             suffix="N",
-            tooltip="Axial stiffness (EA). Only changes the answer for statically indeterminate structures."
+            tooltip="Axial stiffness. Auto-filled when a section is chosen; editable as override.",
         )
-        form.add_spin(
+        ei_box = form.add_spin(
             "EI",
             member.EI,
             lambda v: self.canvas.edit(lambda: setattr(member, "EI", v)),
             lo=1.0,
             decimals=0,
             suffix="N.mm2",
-            tooltip="Bending stiffness (EI). Only changes the answer for statically indeterminate structures."
+            tooltip="Bending stiffness. Auto-filled when a section is chosen; editable as override.",
+        )
+        form.add_button(
+            "Set self-weight from section",
+            _set_sw,
+            tooltip="Fills the self-weight field below: rho * A * 9810e-9 N/mm.",
         )
         form.add_section("Behaviour")
         form.add_combo(

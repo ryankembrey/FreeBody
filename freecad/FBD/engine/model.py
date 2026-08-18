@@ -137,6 +137,8 @@ class Member:
     EA: float = DEFAULT_EA
     EI: float = DEFAULT_EI
     label: str = ""
+    section_name: str = ""          # name from engine.sections.SECTIONS; "" = custom EA/EI
+    material: str = "Steel S275"    # name from engine.sections.MATERIALS
 
     # Non-linear and release behaviour, plus mass. Everything here except
     # mass is ignored by the kinematics module, which reads every member as
