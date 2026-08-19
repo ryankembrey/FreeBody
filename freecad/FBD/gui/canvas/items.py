@@ -61,7 +61,10 @@ def direction_from_handle_snapped(mx, my, magnitude, modifiers=None):
     ctrl_held = False
     if modifiers is not None:
         shift_held = bool(modifiers & QtCore.Qt.KeyboardModifier.ShiftModifier)
-        ctrl_held = bool(modifiers & (QtCore.Qt.KeyboardModifier.ControlModifier | QtCore.Qt.KeyboardModifier.AltModifier))
+        ctrl_held = bool(
+            modifiers
+            & (QtCore.Qt.KeyboardModifier.ControlModifier | QtCore.Qt.KeyboardModifier.AltModifier)
+        )
 
     if ctrl_held:
         final_angle_from_down = raw_angle_from_down
@@ -83,7 +86,7 @@ def direction_from_handle_snapped(mx, my, magnitude, modifiers=None):
 
     final_math_deg = (final_angle_from_down - 90.0) % 360.0
     math_rad = math.radians(final_math_deg)
-    
+
     fx = magnitude * math.cos(math_rad)
     fy = magnitude * math.sin(math_rad)
     return fx, fy, final_angle_from_down, is_snapped
@@ -302,16 +305,27 @@ class NodeItem(_Item):
         if node is None:
             return
         from ..commands import icon_path
+
         form = P.PopupForm("Edit Joint", icon_path("tool_node.svg"))
         form.add_text(
-            "Name", node.label, lambda v: self.canvas.edit(lambda: setattr(node, "label", v)),
-            tooltip="Name of the joint"
+            "Name",
+            node.label,
+            lambda v: self.canvas.edit(lambda: setattr(node, "label", v)),
+            tooltip="Name of the joint",
         )
         form.add_spin(
-            "X coordinate", node.x, lambda v: self.canvas.edit(lambda: setattr(node, "x", v)), suffix="mm", tooltip="X coordinate"
+            "X coordinate",
+            node.x,
+            lambda v: self.canvas.edit(lambda: setattr(node, "x", v)),
+            suffix="mm",
+            tooltip="X coordinate",
         )
         form.add_spin(
-            "Y coordinate", node.y, lambda v: self.canvas.edit(lambda: setattr(node, "y", v)), suffix="mm", tooltip="Y coordinate"
+            "Y coordinate",
+            node.y,
+            lambda v: self.canvas.edit(lambda: setattr(node, "y", v)),
+            suffix="mm",
+            tooltip="Y coordinate",
         )
         form.add_combo(
             "Connection",
@@ -321,6 +335,110 @@ class NodeItem(_Item):
             tooltip="Rigid welds every member meeting here into one body, without grounding the joint itself. For a joint fixed to the world, use a Fixed support instead.",
         )
         self.canvas.open_popup(self.anchor_point(), form)
+
+
+class CrossSectionView(QtWidgets.QWidget):
+    """Live cross-section preview for the member section picker.
+    Draws I, CHS, RHS/SHS, solid round and solid rectangular profiles.
+    """
+
+    _W, _H = 130, 85
+    _BG = QtGui.QColor(238, 243, 250)
+    _FILL = QtGui.QColor(148, 180, 210)
+    _EDGE = QtGui.QColor(38, 62, 92)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumSize(90, 110)
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Expanding,
+        )
+        self._profile = None
+
+    def set_section(self, section_name: str) -> None:
+        from ...engine.sections import PROFILES
+
+        self._profile = PROFILES.get(section_name)
+        self.update()
+
+    def paintEvent(self, event):
+        _ = event
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        # Background
+        p.fillRect(self.rect(), self._BG)
+        p.setPen(QtGui.QPen(QtGui.QColor(200, 212, 225), 1.0))
+        p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), 3, 3)
+
+        if not self._profile:
+            p.setPen(QtGui.QPen(QtGui.QColor(120, 140, 162)))
+            p.setFont(QtGui.QFont("DejaVu Sans", 8))
+            p.drawText(
+                self.rect(),
+                int(QtCore.Qt.AlignmentFlag.AlignCenter),
+                "Custom\n(set EA, EI below)",
+            )
+            return
+
+        M = 4  # margin px
+        avW, avH = self.width() - 2 * M, self.height() - 2 * M
+        cx, cy = self.width() / 2.0, self.height() / 2.0
+        ptype = self._profile["type"]
+        p.setPen(QtGui.QPen(self._EDGE, 1.0))
+        p.setBrush(self._FILL)
+
+        if ptype == "I":
+            h = self._profile["h"]
+            b = self._profile["b"]
+            tf = self._profile["tf"]
+            tw = self._profile["tw"]
+            sc = min(avW / b, avH / h)
+            sh, sb = h * sc, b * sc
+            stf = max(2.5, tf * sc)
+            stw = max(1.5, tw * sc)
+            path = QtGui.QPainterPath()
+            path.addRect(cx - sb / 2, cy - sh / 2, sb, stf)  # top flange
+            path.addRect(cx - stw / 2, cy - sh / 2 + stf, stw, sh - 2 * stf)  # web
+            path.addRect(cx - sb / 2, cy + sh / 2 - stf, sb, stf)  # bot flange
+            p.drawPath(path)
+
+        elif ptype == "CHS":
+            D, t = self._profile["D"], self._profile["t"]
+            sc = min(avW, avH) / D
+            sD = D * sc
+            st = max(2.5, t * sc)
+            outer = QtGui.QPainterPath()
+            outer.addEllipse(QtCore.QPointF(cx, cy), sD / 2, sD / 2)
+            inner = QtGui.QPainterPath()
+            ri = max(0.5, sD / 2 - st)
+            inner.addEllipse(QtCore.QPointF(cx, cy), ri, ri)
+            p.drawPath(outer.subtracted(inner))
+
+        elif ptype == "RHS":
+            H, B, t = self._profile["H"], self._profile["B"], self._profile["t"]
+            sc = min(avW / B, avH / H)
+            sH, sB = H * sc, B * sc
+            st = max(2.5, t * sc)
+            outer = QtGui.QPainterPath()
+            outer.addRect(cx - sB / 2, cy - sH / 2, sB, sH)
+            inner = QtGui.QPainterPath()
+            iW, iH = max(0.5, sB - 2 * st), max(0.5, sH - 2 * st)
+            inner.addRect(cx - iW / 2, cy - iH / 2, iW, iH)
+            p.drawPath(outer.subtracted(inner))
+
+        elif ptype == "ROUND":
+            D = self._profile["D"]
+            sc = min(avW, avH) / D
+            sD = D * sc
+            p.drawEllipse(QtCore.QPointF(cx, cy), sD / 2, sD / 2)
+
+        elif ptype == "RECT":
+            H, B = self._profile["H"], self._profile["B"]
+            sc = min(avW / B, avH / H)
+            sH, sB = H * sc, B * sc
+            p.drawRect(QtCore.QRectF(cx - sB / 2, cy - sH / 2, sB, sH))
 
 
 # ---------------------------------------------------------------- member
@@ -367,17 +485,18 @@ class MemberItem(_Item):
         # Colour by utilisation gradient when a section is assigned;
         # otherwise by axial force sign (tension green, compression red).
         base_col = S.INK
-        res = getattr(self.canvas, 'display_result', None)
+        res = getattr(self.canvas, "display_result", None)
         if res and res.ok:
             forces = res.members.get(self.ident)
             if forces is not None and forces.active:
                 member = self.model.members.get(self.ident)
-                sn = getattr(member, 'section_name', '') if member else ''
+                sn = getattr(member, "section_name", "") if member else ""
                 if sn:
                     from ...engine.sections import utilisation as _util_fn
+
                     N = forces.axial_max if forces.axial else 0.0
                     M = forces.moment_max if forces.moment else 0.0
-                    mat = getattr(member, 'material', 'Steel S275')
+                    mat = getattr(member, "material", "Steel S275")
                     u = _util_fn(sn, mat, N, M)
                     if u is not None:
                         u = max(0.0, u)
@@ -387,9 +506,9 @@ class MemberItem(_Item):
                 elif forces.axial:
                     axial = forces.axial_max
                     if axial > 1e-3:
-                        base_col = S.INTERNAL   # tension: green
+                        base_col = S.INTERNAL  # tension: green
                     elif axial < -1e-3:
-                        base_col = S.APPLIED    # compression: red
+                        base_col = S.APPLIED  # compression: red
         pen = QtGui.QPen(self.ink(base_col), 3.4)
         pen.setCosmetic(True)  # constant thickness at any zoom
         pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
@@ -460,96 +579,18 @@ class MemberItem(_Item):
             return
         model = self.canvas.model
         from ..commands import icon_path
+
         form = P.PopupForm("Edit Member", icon_path("tool_member.svg"))
         form.add_text(
-            "Name", member.label, lambda v: self.canvas.edit(lambda: setattr(member, "label", v)),
-            tooltip="Name of the member"
+            "Name",
+            member.label,
+            lambda v: self.canvas.edit(lambda: setattr(member, "label", v)),
+            tooltip="Name of the member",
         )
-        form.add_readonly("Length", f"{model.member_length(member):,.1f} mm", tooltip="Length of the member")
-        form.add_section("Section")
-        from ...engine.sections import SECTIONS, MATERIALS, section_ea_ei, section_self_weight
-
-        def _on_section(name):
-            def _apply():
-                member.section_name = name
-                if name and name in SECTIONS:
-                    mat = getattr(member, "material", "Steel S275")
-                    ea, ei = section_ea_ei(name, mat)
-                    if ea:
-                        member.EA = ea
-                        member.EI = ei
-                        ea_box.blockSignals(True)
-                        ea_box.setValue(ea)
-                        ea_box.blockSignals(False)
-                        ei_box.blockSignals(True)
-                        ei_box.setValue(ei)
-                        ei_box.blockSignals(False)
-            self.canvas.edit(_apply)
-
-        def _on_material(mat):
-            def _apply():
-                member.material = mat
-                sn = getattr(member, "section_name", "")
-                if sn and sn in SECTIONS:
-                    ea, ei = section_ea_ei(sn, mat)
-                    if ea:
-                        member.EA = ea
-                        member.EI = ei
-                        ea_box.blockSignals(True)
-                        ea_box.setValue(ea)
-                        ea_box.blockSignals(False)
-                        ei_box.blockSignals(True)
-                        ei_box.setValue(ei)
-                        ei_box.blockSignals(False)
-            self.canvas.edit(_apply)
-
-        def _set_sw():
-            sn = getattr(member, "section_name", "")
-            mat = getattr(member, "material", "Steel S275")
-            sw = section_self_weight(sn, mat)
-            if sw > 0.0:
-                self.canvas.edit(lambda: setattr(member, "g", sw))
-                self.canvas.set_prompt(f"Self-weight set to {sw:.5f} N/mm")
-            else:
-                self.canvas.set_prompt("Assign a named section first.")
-
-        form.add_combo(
-            "Section",
-            [("", "Custom")] + [(n, n) for n in SECTIONS],
-            getattr(member, "section_name", ""),
-            _on_section,
-            tooltip="Standard section: fills EA and EI automatically. Choose Custom to enter values by hand.",
+        form.add_readonly(
+            "Length", f"{model.member_length(member):,.1f} mm", tooltip="Length of the member"
         )
-        form.add_combo(
-            "Material",
-            [(n, n) for n in MATERIALS],
-            getattr(member, "material", "Steel S275"),
-            _on_material,
-            tooltip="Material for self-weight calculation and utilisation colour.",
-        )
-        ea_box = form.add_spin(
-            "EA",
-            member.EA,
-            lambda v: self.canvas.edit(lambda: setattr(member, "EA", v)),
-            lo=1.0,
-            decimals=0,
-            suffix="N",
-            tooltip="Axial stiffness. Auto-filled when a section is chosen; editable as override.",
-        )
-        ei_box = form.add_spin(
-            "EI",
-            member.EI,
-            lambda v: self.canvas.edit(lambda: setattr(member, "EI", v)),
-            lo=1.0,
-            decimals=0,
-            suffix="N.mm2",
-            tooltip="Bending stiffness. Auto-filled when a section is chosen; editable as override.",
-        )
-        form.add_button(
-            "Set self-weight from section",
-            _set_sw,
-            tooltip="Fills the self-weight field below: rho * A * 9810e-9 N/mm.",
-        )
+        # --- Behaviour ---------------------------------------------------
         form.add_section("Behaviour")
         form.add_combo(
             "Type",
@@ -566,7 +607,7 @@ class MemberItem(_Item):
                 lambda v, a=attr: self.canvas.edit(
                     lambda: setattr(member, a, bool(v)), rebuild=True
                 ),
-                tooltip=f"Moment release at {label.split()[0].lower()}"
+                tooltip=f"Moment release at {label.split()[0].lower()}",
             )
         form.add_spin(
             "Mp start",
@@ -577,15 +618,17 @@ class MemberItem(_Item):
             suffix="N.mm",
             tooltip="Plastic moment capacity. 0 stays elastic.",
         )
+
+        # --- Physical ----------------------------------------------------
         form.add_section("Physical")
-        form.add_spin(
+        sw_box = form.add_spin(
             "Self weight",
             member.g,
             lambda v: self.canvas.edit(lambda: setattr(member, "g", v)),
             lo=0.0,
             decimals=4,
             suffix="N/mm",
-            tooltip="Self weight downward force per unit length. Only changes the answer for statically indeterminate structures."
+            tooltip="Self weight downward force per unit length. Only changes the answer for statically indeterminate structures.",
         )
         form.add_spin(
             "Mass",
@@ -596,6 +639,150 @@ class MemberItem(_Item):
             suffix="kg",
             tooltip="Only used by Run Motion: a fast-moving link's own inertia adds to the force its driver needs.",
         )
+
+        # --- Section (at the bottom) -------------------------------------
+        from ...engine.sections import (
+            SECTIONS,
+            MATERIALS,
+            SECTIONS_BY_TYPE,
+            SECTION_TYPES,
+            section_ea_ei,
+            section_self_weight,
+        )
+
+        form.add_section("Section")
+
+        # Cross-section preview in the middle column, beside the five field
+        # rows that follow (Type, Size, Material, EA, EI).
+        _view = CrossSectionView()
+        _view.set_section(getattr(member, "section_name", ""))
+        form.add_widget(_view, row_span=5)
+
+        # Determine which type the member's current section belongs to.
+        _cur_sn = getattr(member, "section_name", "")
+        _cur_type = "Custom"
+        for _t, _names in SECTIONS_BY_TYPE.items():
+            if _cur_sn in _names:
+                _cur_type = _t
+                break
+
+        def _on_size(name):
+            def _apply():
+                member.section_name = name
+                if name and name in SECTIONS:
+                    mat = getattr(member, "material", "Steel S275")
+                    ea, ei = section_ea_ei(name, mat)
+                    if ea:
+                        member.EA = ea
+                        member.EI = ei
+                        ea_box.blockSignals(True)
+                        ea_box.setValue(ea)
+                        ea_box.blockSignals(False)
+                        ei_box.blockSignals(True)
+                        ei_box.setValue(ei)
+                        ei_box.blockSignals(False)
+
+            self.canvas.edit(_apply)
+            _view.set_section(name)
+
+        def _on_type(type_name):
+            sizes = SECTIONS_BY_TYPE.get(type_name, [])
+            _size_combo.blockSignals(True)
+            _size_combo.clear()
+            if sizes:
+                for sn in sizes:
+                    _size_combo.addItem(sn, sn)
+            else:
+                _size_combo.addItem("(set EA / EI below)", "")
+            _size_combo.blockSignals(False)
+            first = _size_combo.currentData() or ""
+            _on_size(first)
+
+        form.add_combo(
+            "Type",
+            [("Custom", "Custom")] + [(t, t) for t in SECTION_TYPES],
+            _cur_type,
+            _on_type,
+            tooltip="Section family. Choose a type, then pick a size.",
+        )
+        _size_init = (
+            [("", "(set EA / EI below)")]
+            if _cur_type == "Custom"
+            else [(sn, sn) for sn in SECTIONS_BY_TYPE.get(_cur_type, [])]
+        )
+        _size_combo = form.add_combo(
+            "Size",
+            _size_init,
+            _cur_sn,
+            _on_size,
+            tooltip="Specific size within the chosen family.",
+        )
+
+        def _on_material(mat):
+            def _apply():
+                member.material = mat
+                sn = getattr(member, "section_name", "")
+                if sn and sn in SECTIONS:
+                    ea, ei = section_ea_ei(sn, mat)
+                    if ea:
+                        member.EA = ea
+                        member.EI = ei
+                        ea_box.blockSignals(True)
+                        ea_box.setValue(ea)
+                        ea_box.blockSignals(False)
+                        ei_box.blockSignals(True)
+                        ei_box.setValue(ei)
+                        ei_box.blockSignals(False)
+
+            self.canvas.edit(_apply)
+
+        form.add_combo(
+            "Material",
+            [(n, n) for n in MATERIALS],
+            getattr(member, "material", "Steel S275"),
+            _on_material,
+            tooltip="Material: determines E (EA/EI), density (self-weight), and fy (utilisation colour).",
+        )
+        ea_box = form.add_spin(
+            "EA",
+            member.EA,
+            lambda v: self.canvas.edit(lambda: setattr(member, "EA", v)),
+            lo=1.0,
+            decimals=0,
+            suffix="N",
+            tooltip="Axial stiffness. Auto-filled from section; editable as override.",
+        )
+        ei_box = form.add_spin(
+            "EI",
+            member.EI,
+            lambda v: self.canvas.edit(lambda: setattr(member, "EI", v)),
+            lo=1.0,
+            decimals=0,
+            suffix="N.mm2",
+            tooltip="Bending stiffness. Auto-filled from section; editable as override.",
+        )
+
+        def _set_sw():
+            sn = getattr(member, "section_name", "")
+            mat = getattr(member, "material", "Steel S275")
+            sw = section_self_weight(sn, mat)
+            if sw > 0.0:
+                self.canvas.edit(lambda: setattr(member, "g", sw))
+                # Refresh the Self weight field in place without re-firing its
+                # own valueChanged handler.
+                sw_box.blockSignals(True)
+                sw_box.setValue(sw)
+                sw_box.blockSignals(False)
+                self.canvas.set_prompt(f"Self-weight set to {sw:.5f} N/mm")
+            else:
+                self.canvas.set_prompt("Assign a named section first.")
+
+        form.add_button(
+            "Set self-weight from section",
+            _set_sw,
+            tooltip="Fills the Self weight field above: rho * A * 9.81e-9 N/mm.",
+        )
+
         self.canvas.open_popup(_scene_pos, form)
 
 
@@ -696,13 +883,13 @@ class SupportItem(_Item):
         stem_pen.setCapStyle(QtCore.Qt.PenCapStyle.SquareCap)
         painter.setPen(stem_pen)
         painter.drawLine(QtCore.QPointF(0, 0), QtCore.QPointF(0, size))
-        
+
         # Ground base plate at y = size (30px below joint, matching Pin/Roller)
         a, b = QtCore.QPointF(-size * 0.85, size), QtCore.QPointF(size * 0.85, size)
         plate_pen = QtGui.QPen(painter.pen().color(), 2.2)
         painter.setPen(plate_pen)
         painter.drawLine(a, b)
-        
+
         # Ground hatching
         hatch_pen = QtGui.QPen(painter.pen().color(), 1.3)
         painter.setPen(hatch_pen)
@@ -740,7 +927,10 @@ class SupportItem(_Item):
         if support is None:
             return
         from ..commands import icon_path
-        icon_name = f"tool_{support.kind if support.kind in ('pin', 'fixed', 'spring') else 'roller'}.svg"
+
+        icon_name = (
+            f"tool_{support.kind if support.kind in ('pin', 'fixed', 'spring') else 'roller'}.svg"
+        )
         form = P.PopupForm("Edit Support", icon_path(icon_name))
         form.add_combo(
             "Type",
@@ -847,8 +1037,14 @@ class AnchorItem(_Item):
             return
         member = self.model.members.get(a.member)
         from ..commands import icon_path
+
         form = P.PopupForm("Edit Point", icon_path("tool_anchor.svg"))
-        form.add_text("Name", a.label, lambda v: self.canvas.edit(lambda: setattr(a, "label", v)), tooltip="Name of the point")
+        form.add_text(
+            "Name",
+            a.label,
+            lambda v: self.canvas.edit(lambda: setattr(a, "label", v)),
+            tooltip="Name of the point",
+        )
         form.add_spin(
             "Position",
             a.t * 100.0,
@@ -960,60 +1156,68 @@ class PointLoadItem(_Item):
     def _paint_rotation_guides(self, painter, ux, uy, tail):
         painter.save()
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
-        
+
         r = self.LEN
-        
+
         # 1. Subtle dashed protractor circle around tip (0, 0)
         circle_pen = QtGui.QPen(QtGui.QColor(180, 190, 205, 120), 1.0, QtCore.Qt.PenStyle.DashLine)
         circle_pen.setCosmetic(True)
         painter.setPen(circle_pen)
         painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
         painter.drawEllipse(QtCore.QPointF(0, 0), r, r)
-        
+
         # 2. Radial guide rays for 8 major directions (0, 45, 90, 135, 180, 225, 270, 315 relative to down)
         ray_pen = QtGui.QPen(QtGui.QColor(180, 190, 205, 100), 1.0, QtCore.Qt.PenStyle.DashLine)
         ray_pen.setCosmetic(True)
         painter.setPen(ray_pen)
-        
+
         for angle_from_down in (0, 45, 90, 135, 180, 225, 270, 315):
             math_rad = math.radians(angle_from_down - 90.0)
             tx = -math.cos(math_rad) * r
             ty = math.sin(math_rad) * r
             painter.drawLine(QtCore.QPointF(tx * 0.8, ty * 0.8), QtCore.QPointF(tx * 1.1, ty * 1.1))
-            
+
         # 3. Handle Ring (Selection blue S.SELECT)
         ring_col = S.SELECT
         painter.setPen(QtGui.QPen(ring_col, 2.0))
         painter.setBrush(QtGui.QColor(255, 255, 255, 240))
         painter.drawEllipse(tail, self.HANDLE_R * 1.15, self.HANDLE_R * 1.15)
-        
+
         # 4. Angle text OUTWARD of the circle (beyond tail handle, screen-constant font size)
         angle_deg = getattr(self, "_current_angle", 0.0)
         text = format_angle_label(angle_deg)
-        
+
         offset = self.HANDLE_R + 14.0
         text_pos = QtCore.QPointF(-ux * (self.LEN + offset), -uy * (self.LEN + offset))
-        
+
         f = S.font(13.0, bold=True)
         metrics = QtGui.QFontMetricsF(f)
         rect = metrics.boundingRect(text)
-        
+
         x = text_pos.x() - rect.width() / 2.0
         y = text_pos.y() + metrics.capHeight() / 2.0
-        
+
         path = QtGui.QPainterPath()
         path.addText(x, y, f, text)
-        
+
         # White background stroke halo for crisp contrast
-        painter.setPen(QtGui.QPen(S.PAPER, 3.0, QtCore.Qt.PenStyle.SolidLine, QtCore.Qt.PenCapStyle.RoundCap, QtCore.Qt.PenJoinStyle.RoundJoin))
+        painter.setPen(
+            QtGui.QPen(
+                S.PAPER,
+                3.0,
+                QtCore.Qt.PenStyle.SolidLine,
+                QtCore.Qt.PenCapStyle.RoundCap,
+                QtCore.Qt.PenJoinStyle.RoundJoin,
+            )
+        )
         painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
         painter.drawPath(path)
-        
+
         # Text fill in selection blue
         painter.setPen(QtCore.Qt.PenStyle.NoPen)
         painter.setBrush(S.SELECT)
         painter.drawPath(path)
-        
+
         painter.restore()
 
     def paint(self, painter, option, widget=None):
@@ -1134,6 +1338,7 @@ class PointLoadItem(_Item):
         if l is None:
             return
         from ..commands import icon_path
+
         form = P.PopupForm("Edit Force", icon_path("tool_force.svg"))
         form.add_spin(
             "Fx",
@@ -1141,7 +1346,7 @@ class PointLoadItem(_Item):
             lambda v: self.canvas.edit(lambda: setattr(l, "fx", v)),
             decimals=2,
             suffix="N",
-            tooltip="Horizontal force. Drag the small circle on the arrow to rotate it. Applied loads draw red."
+            tooltip="Horizontal force. Drag the small circle on the arrow to rotate it. Applied loads draw red.",
         )
         form.add_spin(
             "Fy",
@@ -1149,7 +1354,7 @@ class PointLoadItem(_Item):
             lambda v: self.canvas.edit(lambda: setattr(l, "fy", v)),
             decimals=2,
             suffix="N",
-            tooltip="Vertical force. Drag the small circle on the arrow to rotate it. Applied loads draw red."
+            tooltip="Vertical force. Drag the small circle on the arrow to rotate it. Applied loads draw red.",
         )
         form.add_readonly("Magnitude", f"{l.magnitude():,.1f} N", tooltip="Total force magnitude")
         self.canvas.open_popup(_scene_pos, form)
@@ -1203,6 +1408,7 @@ class MomentLoadItem(_Item):
         if l is None:
             return
         from ..commands import icon_path
+
         form = P.PopupForm("Edit Moment", icon_path("tool_moment.svg"))
         form.add_spin(
             "Moment",
@@ -1219,12 +1425,12 @@ def draw_moment_arrow(painter, center, radius, ccw, color):
     """Curved moment arrow with a chord-aligned arrowhead capping the arc."""
     painter.save()
     painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
-    
+
     # 1. Arrowhead dimensions and angular span along the circle
     head_size = max(9.0, radius * 0.40)
     delta_rad = head_size / max(1.0, radius)
     delta_deg = math.degrees(delta_rad)
-    
+
     # 2. Total sweep 270°. Arc line stops short at base_deg so arrowhead caps it seamlessly.
     if ccw:
         start_deg = 45.0
@@ -1396,6 +1602,7 @@ class LineLoadItem(_Item):
         if l is None:
             return
         from ..commands import icon_path
+
         form = P.PopupForm("Edit Line Load", icon_path("tool_lineload.svg"))
         form.add_spin(
             "Load q",
@@ -1414,12 +1621,14 @@ class LineLoadItem(_Item):
             ],
             l.direction,
             lambda v: self.canvas.edit(lambda: setattr(l, "direction", v)),
-            tooltip="Direction of the distributed load"
+            tooltip="Direction of the distributed load",
         )
         member = self.model.members.get(l.member)
         if member:
             total = abs(l.q) * self.model.member_length(member)
-            form.add_readonly("Total load", f"{total:,.1f} N", tooltip="Total equivalent point load magnitude")
+            form.add_readonly(
+                "Total load", f"{total:,.1f} N", tooltip="Total equivalent point load magnitude"
+            )
         self.canvas.open_popup(_scene_pos, form)
 
 

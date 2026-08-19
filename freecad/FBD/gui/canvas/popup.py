@@ -28,6 +28,7 @@ class PopupForm(QtWidgets.QWidget):
         self._main_layout.setContentsMargins(4, 6, 4, 6)
         self._main_layout.setSpacing(6)
 
+        self._three_col = False
         self._current_layout = self._create_grid_layout()
         self._main_layout.addLayout(self._current_layout)
         self._row_index = 0
@@ -37,8 +38,9 @@ class PopupForm(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setHorizontalSpacing(8)
         layout.setVerticalSpacing(4)
-        layout.setColumnStretch(0, 1)
-        layout.setColumnStretch(1, 1)
+        layout.setColumnStretch(0, 2)  # labels
+        layout.setColumnStretch(1, 3)  # preview
+        layout.setColumnStretch(2, 5)  # fields
         return layout
 
     def _stretch(self, widget):
@@ -55,7 +57,12 @@ class PopupForm(QtWidgets.QWidget):
             0,
             QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter,
         )
-        self._current_layout.addWidget(widget, self._row_index, 1)
+        if self._three_col:
+            # label (col 0) | preview (col 1) | field (col 2)
+            self._current_layout.addWidget(widget, self._row_index, 2)
+        else:
+            # label (col 0) | field spanning the remaining two columns
+            self._current_layout.addWidget(widget, self._row_index, 1, 1, 2)
         self._row_index += 1
 
     def add_spin(self, label, value, setter, lo=-1e12, hi=1e12, decimals=3, suffix="", tooltip=""):
@@ -114,14 +121,31 @@ class PopupForm(QtWidgets.QWidget):
 
         self._current_layout = group_layout
         self._row_index = 0
+        self._three_col = False
         return group_box
+
+    def add_widget(self, widget, row_span=1):
+        """Place a preview widget in the middle column, spanning row_span rows
+        so it sits beside the field rows that follow. Switches this section to
+        three columns (label | preview | field) and does not advance the row
+        cursor, so the next rows added line up next to the preview."""
+        self._three_col = True
+        self._current_layout.addWidget(
+            widget,
+            self._row_index,
+            1,
+            row_span,
+            1,
+            alignment=QtCore.Qt.AlignmentFlag.AlignCenter,
+        )
+        return widget
 
     def add_button(self, text, callback, tooltip=""):
         btn = QtWidgets.QPushButton(text)
         if tooltip:
             btn.setToolTip(tooltip)
         btn.clicked.connect(callback)
-        self._current_layout.addWidget(btn, self._row_index, 0, 1, 2)
+        self._current_layout.addWidget(btn, self._row_index, 0, 1, 3)
         self._row_index += 1
         return btn
 

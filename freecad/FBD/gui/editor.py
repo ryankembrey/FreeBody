@@ -1374,6 +1374,35 @@ class Editor(QtWidgets.QWidget, MotionController):
             f"Section '{label}' assigned to {len(selected_mid)} member(s)."
         )
 
+    def _assign_section_to_selection(self, section_name: str) -> None:
+        """Assign a named section to every selected member, updating EA and EI."""
+        from ..engine.sections import SECTIONS, section_ea_ei
+        selected_mid = [
+            ident for (kind, ident), item in self._items.items()
+            if kind == "member" and item.isSelected()
+        ]
+        if not selected_mid:
+            return
+
+        def _apply(m):
+            for mid in selected_mid:
+                mem = m.members.get(mid)
+                if mem is None:
+                    continue
+                mem.section_name = section_name
+                if section_name and section_name in SECTIONS:
+                    mat = getattr(mem, "material", "Steel S275")
+                    ea, ei = section_ea_ei(section_name, mat)
+                    if ea:
+                        mem.EA = ea
+                        mem.EI = ei
+
+        label = section_name or "Custom"
+        bridge_edit(self, f"Assign section {label}", _apply)
+        self.set_prompt(
+            f"Section '{label}' assigned to {len(selected_mid)} member(s)."
+        )
+
     def export_pdf_prompt(self):
         import PySide6.QtWidgets as QtWidgets
 
@@ -1423,13 +1452,16 @@ class Editor(QtWidgets.QWidget, MotionController):
                 _sec_menu = menu.addMenu(
                     f"Assign section to {len(_sel_mems)} member(s)"
                 )
-                from ..engine.sections import SECTIONS as _SECS
-                for _sname in [""] + list(_SECS.keys()):
-                    _slbl = "Custom (manual EA / EI)" if _sname == "" else _sname
-                    _act = _sec_menu.addAction(_slbl)
-                    _act.triggered.connect(
-                        lambda _c=False, _n=_sname: self._assign_section_to_selection(_n)
-                    )
+                from ..engine.sections import SECTIONS_BY_TYPE as _SBT
+                for _stype, _snames in _SBT.items():
+                    _sub = _sec_menu.addMenu(_stype)
+                    for _sname in _snames:
+                        _act = _sub.addAction(_sname)
+                        _act.triggered.connect(
+                            lambda _c=False, _n=_sname: self._assign_section_to_selection(_n)
+                        )
+                _custom = _sec_menu.addAction("Custom (manual EA / EI)")
+                _custom.triggered.connect(lambda: self._assign_section_to_selection(""))
             add_action(menu, f"Delete Selection ({selected_count})", self.delete_selection)
         elif kind == "node":
             add_action(
@@ -1509,13 +1541,16 @@ class Editor(QtWidgets.QWidget, MotionController):
                 menu, "Isolate Member (FBD)", lambda: self.isolate_member(ident), "fbd_new.svg"
             )
             _sec_menu = menu.addMenu("Assign section")
-            from ..engine.sections import SECTIONS as _SECS
-            for _sname in [""] + list(_SECS.keys()):
-                _slbl = "Custom (manual EA / EI)" if _sname == "" else _sname
-                _act = _sec_menu.addAction(_slbl)
-                _act.triggered.connect(
-                    lambda _c=False, _n=_sname: self._assign_section_to_selection(_n)
-                )
+            from ..engine.sections import SECTIONS_BY_TYPE as _SBT
+            for _stype, _snames in _SBT.items():
+                _sub = _sec_menu.addMenu(_stype)
+                for _sname in _snames:
+                    _act = _sub.addAction(_sname)
+                    _act.triggered.connect(
+                        lambda _c=False, _n=_sname: self._assign_section_to_selection(_n)
+                    )
+            _custom_act = _sec_menu.addAction("Custom (manual EA / EI)")
+            _custom_act.triggered.connect(lambda: self._assign_section_to_selection(""))
             menu.addSeparator()
             add_action(
                 menu,
